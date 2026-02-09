@@ -192,7 +192,7 @@ export function AdminPanel({
 
   const [statusFilter, setStatusFilter] = useState<'all' | Order['status']>('all');
   const [historyQuery, setHistoryQuery] = useState('');
-  const [historyRange, setHistoryRange] = useState<'today' | '7d' | 'all'>('today');
+  const [historyRange, setHistoryRange] = useState<'today' | '7d' | 'all'>('all');
   const [historyDays, setHistoryDays] = useState<HistoryDay[]>([]);
   const [selectedDateKey, setSelectedDateKey] = useState<string>('');
 
@@ -1039,21 +1039,23 @@ export function AdminPanel({
                     );
                   })}
               </div>
+            ) : orders.length === 0 ? (
+              <div className="text-xs text-[var(--matte-black)] opacity-60">
+                {text.noOrders}
+              </div>
             ) : (
-              orders
-                .filter((o) => o.status === 'completed')
-                .map((order) => {
-                  // Use displayNumber for simple order number (1, 2, 3...) or orderNumber for full format (20241220-001)
-                  const orderNum =
-                    order.displayNumber ||
-                    order.orderNumber?.split('-')[1] ||
-                    order.id.replace('order:', '').slice(0, 13);
+              orders.map((order) => {
+                // Use displayNumber for simple order number (1, 2, 3...) or orderNumber for full format (20241220-001)
+                const orderNum =
+                  order.displayNumber ||
+                  order.orderNumber?.split('-')[1] ||
+                  order.id.replace('order:', '').slice(0, 13);
 
-                  return (
-                    <div
-                      key={order.id}
-                      className="border-2 border-[var(--matte-black)] p-6 bg-[var(--crisp-white)]"
-                    >
+                return (
+                  <div
+                    key={order.id}
+                    className="border-2 border-[var(--matte-black)] p-6 bg-[var(--crisp-white)]"
+                  >
                       {/* Order Header */}
                       <div className="flex items-start justify-between mb-4 pb-4 border-b border-[var(--matte-black)]">
                         <div>
