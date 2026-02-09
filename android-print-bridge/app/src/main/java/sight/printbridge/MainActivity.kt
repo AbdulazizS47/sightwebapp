@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import sight.printbridge.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
@@ -40,9 +41,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     binding.startButton.setOnClickListener {
-      val serverUrl = binding.serverUrl.text.toString().trim()
+      val serverInput = binding.serverUrl.text.toString().trim()
       val deviceKey = binding.deviceKey.text.toString().trim()
-      if (serverUrl.isEmpty() || deviceKey.isEmpty()) {
+      if (serverInput.isEmpty() || deviceKey.isEmpty()) {
         setError("Missing server URL or device key")
         return@setOnClickListener
       }
@@ -56,9 +57,33 @@ class MainActivity : AppCompatActivity() {
         setError("Select a printer")
         return@setOnClickListener
       }
-      prefs.edit().putString("serverUrl", serverUrl).putString("deviceKey", deviceKey).apply()
-      prefs.edit().putString("printerAddress", device.address).apply()
-      ContextCompat.startForegroundService(this, Intent(this, PrintService::class.java))
+      val normalized = normalizeServerUrl(serverInput)
+      if (normalized == null) {
+        setError("Invalid server URL")
+        return@setOnClickListener
+      }
+      if (normalized.startsWith("http://") && !isLocalHost(normalized)) {
+        setError("Use https for public domains")
+        return@setOnClickListener
+      }
+
+      ioScope.launch {
+        try {
+          setStatus("Checking server...")
+          val client = PrintClient(normalized, deviceKey)
+          client.ping()
+          client.pingDeviceKey()
+          prefs.edit().putString("serverUrl", normalized).putString("deviceKey", deviceKey).apply()
+          prefs.edit().putString("printerAddress", device.address).apply()
+          setStatus("Server OK")
+          ContextCompat.startForegroundService(
+            this@MainActivity,
+            Intent(this@MainActivity, PrintService::class.java),
+          )
+        } catch (e: Exception) {
+          setError("Server check failed: ${e.message}")
+        }
+      }
     }
 
     binding.testButton.setOnClickListener {
@@ -237,5 +262,31 @@ class MainActivity : AppCompatActivity() {
       }
     }
     return null
+  }
+
+  private fun normalizeServerUrl(input: String): String? {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) return null
+    val candidate = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      trimmed
+    } else {
+      "https://$trimmed"
+    }
+    val url = candidate.toHttpUrlOrNull() ?: return null
+    return url.newBuilder().build().toString().trimEnd('/')
+  }
+
+  private fun isLocalHost(url: String): Boolean {
+    val host = url.toHttpUrlOrNull()?.host ?: return false
+    if (host == "localhost") return true
+    if (host.startsWith("127.")) return true
+    if (host.startsWith("10.")) return true
+    if (host.startsWith("192.168.")) return true
+    if (host.startsWith("172.")) {
+      val parts = host.split(".")
+      val second = parts.getOrNull(1)?.toIntOrNull() ?: return false
+      return second in 16..31
+    }
+    return false
   }
 }

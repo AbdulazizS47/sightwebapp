@@ -1004,6 +1004,12 @@ app.post('/api/orders/create', async (c) => {
 });
 
 // Print jobs: claim next pending job (for print bridge)
+app.get('/api/print/ping', async (c) => {
+  const unauthorized = requirePrintDevice(c);
+  if (unauthorized) return unauthorized;
+  return c.json({ success: true });
+});
+
 app.post('/api/print/jobs/claim', async (c) => {
   const unauthorized = requirePrintDevice(c);
   if (unauthorized) return unauthorized;

@@ -15,6 +15,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.net.UnknownHostException
+import javax.net.ssl.SSLHandshakeException
 
 class PrintService : Service() {
   private val scope = CoroutineScope(Dispatchers.IO)
@@ -42,15 +45,36 @@ class PrintService : Service() {
         stopSelf()
         return@launch
       }
+      val normalized = normalizeServerUrl(serverUrl)
+      if (normalized == null) {
+        updateNotification("Invalid server URL")
+        stopSelf()
+        return@launch
+      }
+      if (normalized.startsWith("http://") && !isLocalHost(normalized)) {
+        updateNotification("Use https for public domains")
+        stopSelf()
+        return@launch
+      }
       if (!hasBluetoothPermissions()) {
         updateNotification("Bluetooth permission required")
         stopSelf()
         return@launch
       }
 
-      val client = PrintClient(serverUrl, deviceKey)
+      val client = PrintClient(normalized, deviceKey)
       val renderer = ReceiptRenderer(this@PrintService)
       val logo = loadLogo(this@PrintService)
+
+      try {
+        updateNotification("Checking server...")
+        client.ping()
+        client.pingDeviceKey()
+      } catch (e: Exception) {
+        updateNotification(errorMessage(e))
+        stopSelf()
+        return@launch
+      }
 
       updateNotification("Polling")
 
@@ -82,7 +106,7 @@ class PrintService : Service() {
             }
           }
         } catch (e: Exception) {
-          updateNotification("Error: ${e.message}")
+          updateNotification(errorMessage(e))
         }
 
         delay(4000)
@@ -126,6 +150,14 @@ class PrintService : Service() {
     manager.notify(1, buildNotification(text))
   }
 
+  private fun errorMessage(e: Exception): String {
+    return when (e) {
+      is UnknownHostException -> "DNS error: can't resolve host"
+      is SSLHandshakeException -> "TLS error: check HTTPS"
+      else -> "Error: ${e.message}"
+    }
+  }
+
   private fun bitmapHasInk(bitmap: android.graphics.Bitmap): Boolean {
     val width = bitmap.width
     val height = bitmap.height
@@ -147,6 +179,32 @@ class PrintService : Service() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
     return checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
       checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+  }
+
+  private fun normalizeServerUrl(input: String): String? {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) return null
+    val candidate = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      trimmed
+    } else {
+      "https://$trimmed"
+    }
+    val url = candidate.toHttpUrlOrNull() ?: return null
+    return url.newBuilder().build().toString().trimEnd('/')
+  }
+
+  private fun isLocalHost(url: String): Boolean {
+    val host = url.toHttpUrlOrNull()?.host ?: return false
+    if (host == "localhost") return true
+    if (host.startsWith("127.")) return true
+    if (host.startsWith("10.")) return true
+    if (host.startsWith("192.168.")) return true
+    if (host.startsWith("172.")) {
+      val parts = host.split(".")
+      val second = parts.getOrNull(1)?.toIntOrNull() ?: return false
+      return second in 16..31
+    }
+    return false
   }
 }
 

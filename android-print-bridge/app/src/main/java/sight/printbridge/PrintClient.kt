@@ -11,6 +11,40 @@ class PrintClient(private val serverUrl: String, private val deviceKey: String) 
   private val client = OkHttpClient()
   private val jsonMedia = "application/json".toMediaType()
 
+  fun ping() {
+    val request = Request.Builder()
+      .url("${serverUrl.trimEnd('/')}/api/health")
+      .get()
+      .build()
+    client.newCall(request).execute().use { resp ->
+      val body = resp.body?.string() ?: ""
+      if (!resp.isSuccessful) {
+        val msg = if (body.isNotBlank()) body else "HTTP ${resp.code}"
+        throw IllegalStateException("Health check failed: $msg")
+      }
+    }
+  }
+
+  fun pingDeviceKey() {
+    val request = Request.Builder()
+      .url("${serverUrl.trimEnd('/')}/api/print/ping")
+      .addHeader("X-Device-Key", deviceKey)
+      .get()
+      .build()
+    client.newCall(request).execute().use { resp ->
+      val body = resp.body?.string() ?: ""
+      if (!resp.isSuccessful) {
+        val msg = if (body.isNotBlank()) body else "HTTP ${resp.code}"
+        throw IllegalStateException("Device key check failed: $msg")
+      }
+      val json = JSONObject(body)
+      if (!json.optBoolean("success", false)) {
+        val err = json.optString("error", "Unauthorized")
+        throw IllegalStateException("Device key check failed: $err")
+      }
+    }
+  }
+
   fun claimJob(): PrintJob? {
     val request = Request.Builder()
       .url("${serverUrl.trimEnd('/')}/api/print/jobs/claim")
