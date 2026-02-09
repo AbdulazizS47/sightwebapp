@@ -289,15 +289,24 @@ app.post('/api/auth/verify-otp', async (c) => {
 
     await pool.execute('UPDATE otp_codes SET consumedAt = ? WHERE id = ?', [now, rec.id]);
 
-    // Assign role based on configured admin phone
-    const role = normalizedPhone === normalizeKsaPhone(ADMIN_PHONE) ? 'admin' : 'user';
+    const adminPhone = normalizeKsaPhone(ADMIN_PHONE);
     const id = `user:${normalizedPhone}`;
-    // Persist user record (upsert)
+    const [userRows] = await pool.execute(
+      'SELECT name, email, language, role FROM users WHERE id = ? LIMIT 1',
+      [id]
+    );
+    const existing = Array.isArray(userRows) && userRows[0] ? userRows[0] : null;
+    const existingName = String(existing?.name || '').trim();
+    const existingRole = String(existing?.role || '').trim();
+    const role = normalizedPhone === adminPhone ? 'admin' : existingRole || 'user';
+    const effectiveName = existingName || 'Guest';
+
+    // Persist user record (upsert) without clobbering existing name
     await pool.execute(
       'INSERT INTO users (id, phoneNumber, name, email, language, role, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE role=VALUES(role), updatedAt=VALUES(updatedAt)',
-      [id, normalizedPhone, 'Guest', null, null, role, Date.now(), Date.now()]
+      [id, normalizedPhone, effectiveName, null, null, role, Date.now(), Date.now()]
     );
-    const user = { id, phoneNumber: normalizedPhone, name: 'Guest', role };
+    const user = { id, phoneNumber: normalizedPhone, name: effectiveName, role };
     const sessionToken = `sess_${crypto.randomBytes(24).toString('base64url')}`;
     const expiresAt = Date.now() + SESSION_TTL_MS;
     sessions.set(sessionToken, { user, expiresAt });
