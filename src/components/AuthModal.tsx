@@ -24,7 +24,7 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
       title: 'Sign In',
       userTab: 'Phone',
       phoneLabel: 'Phone Number',
-      phonePlaceholder: '+966 5X XXX XXXX',
+      phonePlaceholder: '5XXXXXXXX',
       sendOtp: 'Send Code',
       otpLabel: 'Verification Code',
       otpPlaceholder: 'Enter 6-digit code',
@@ -38,7 +38,7 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
       title: 'تسجيل الدخول',
       userTab: 'هاتف',
       phoneLabel: 'رقم الهاتف',
-      phonePlaceholder: '+966 5X XXX XXXX',
+      phonePlaceholder: '5XXXXXXXX',
       sendOtp: 'إرسال الرمز',
       otpLabel: 'رمز التحقق',
       otpPlaceholder: 'أدخل رمز من 6 أرقام',
@@ -53,9 +53,22 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
   const text = content[language];
   const isRTL = language === 'ar';
 
+  const normalizeLocalPhone = (raw: string) => {
+    const digits = raw.replace(/\D/g, '');
+    if (digits.startsWith('05')) return digits;
+    if (digits.startsWith('5')) return `0${digits}`;
+    return digits;
+  };
+
   const handleSendOtp = async () => {
     if (!phoneNumber) {
       setError('Phone number is required');
+      return;
+    }
+
+    const normalized = normalizeLocalPhone(phoneNumber);
+    if (!/^05\d{8}$/.test(normalized)) {
+      setError('Enter a valid KSA number (05xxxxxxxx or 5xxxxxxxx)');
       return;
     }
 
@@ -68,7 +81,7 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ phoneNumber, language }),
+        body: JSON.stringify({ phoneNumber: normalized, language }),
       });
 
       const data = await response.json();
@@ -93,6 +106,12 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
       return;
     }
 
+    const normalized = normalizeLocalPhone(phoneNumber);
+    if (!/^05\d{8}$/.test(normalized)) {
+      setError('Enter a valid KSA number (05xxxxxxxx or 5xxxxxxxx)');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
@@ -102,7 +121,7 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ phoneNumber, otp }),
+        body: JSON.stringify({ phoneNumber: normalized, otp }),
       });
 
       const data = await response.json();
@@ -195,15 +214,25 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
             <label className="block text-sm mb-2 text-[var(--matte-black)]">
               {text.phoneLabel}
             </label>
-            <input
-              type="tel"
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-              placeholder={text.phonePlaceholder}
-              dir="ltr"
-              className="w-full p-4 border-2 border-[var(--matte-black)] bg-[var(--crisp-white)] text-[var(--matte-black)] mb-4 focus:outline-none focus:border-[var(--espresso-brown)]"
-              disabled={loading}
-            />
+            <div className="flex items-center gap-2 border-2 border-[var(--matte-black)] bg-[var(--crisp-white)] px-4 py-3 mb-4 focus-within:border-[var(--espresso-brown)]">
+              <span className="text-[var(--matte-black)] text-sm" dir="ltr">
+                +966
+              </span>
+              <input
+                type="tel"
+                value={phoneNumber}
+                onChange={(e) => {
+                  const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                  setPhoneNumber(digits);
+                }}
+                placeholder="5XXXXXXXX"
+                dir="ltr"
+                inputMode="numeric"
+                autoComplete="tel"
+                className="w-full bg-transparent text-[var(--matte-black)] focus:outline-none"
+                disabled={loading}
+              />
+            </div>
 
             <div className="text-xs text-[var(--matte-black)] opacity-60 mb-4 p-3 bg-[var(--cool-gray)]">
               {text.note}
