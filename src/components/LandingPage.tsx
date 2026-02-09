@@ -10,14 +10,26 @@ export function LandingPage({ onNavigate, language }: LandingPageProps) {
   const content = {
     en: {
       header: 'SIGHT',
-      tagline: 'Your Secret Coffee Space',
+      tagline: (
+        <>
+          OUT OF SIGHT,
+          <br />
+          ALWAYS ON YOUR SIDE
+        </>
+      ),
       viewMenu: 'MENU',
       pickUp: 'Pick Up Order',
       contact: 'Contact Us',
     },
     ar: {
       header: 'سايت',
-      tagline: 'قهوتك ، مزاجك ، بعيد عن زحمتهم',
+      tagline: (
+        <>
+          أطلب
+          <br />
+          واستلم على طريقك
+        </>
+      ),
       viewMenu: 'القائمة',
       pickUp: 'طلب استلام',
       contact: 'اتصل بنا',
