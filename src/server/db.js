@@ -1,13 +1,43 @@
 import 'dotenv/config';
 import mysql from 'mysql2/promise';
 
-const {
-  MYSQL_HOST = 'localhost',
-  MYSQL_PORT = '3306',
-  MYSQL_USER = 'root',
-  MYSQL_PASSWORD = '',
-  MYSQL_DATABASE = 'sight_app',
-} = process.env;
+const parseMysqlUrl = (value) => {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (!url.hostname) return null;
+    return {
+      host: url.hostname,
+      port: url.port || '3306',
+      user: decodeURIComponent(url.username || 'root'),
+      password: decodeURIComponent(url.password || ''),
+      database: url.pathname ? url.pathname.replace(/^\//, '') : '',
+    };
+  } catch {
+    return null;
+  }
+};
+
+const env = process.env;
+const urlConfig =
+  parseMysqlUrl(env.MYSQL_URL) ||
+  parseMysqlUrl(env.MYSQL_URI) ||
+  parseMysqlUrl(env.DATABASE_URL);
+
+const MYSQL_HOST =
+  env.MYSQL_HOST || env.MYSQLHOST || (urlConfig ? urlConfig.host : 'localhost');
+const MYSQL_PORT =
+  env.MYSQL_PORT || env.MYSQLPORT || (urlConfig ? urlConfig.port : '3306');
+const MYSQL_USER =
+  env.MYSQL_USER || env.MYSQLUSER || (urlConfig ? urlConfig.user : 'root');
+const MYSQL_PASSWORD =
+  env.MYSQL_PASSWORD ||
+  env.MYSQLPASSWORD ||
+  (urlConfig ? urlConfig.password : '');
+const MYSQL_DATABASE =
+  env.MYSQL_DATABASE ||
+  env.MYSQLDATABASE ||
+  (urlConfig ? urlConfig.database : 'sight_app');
 
 export const pool = mysql.createPool({
   host: MYSQL_HOST,
