@@ -107,6 +107,7 @@ export async function initSchema() {
       total DECIMAL(10,2) NOT NULL,
       paymentMethod VARCHAR(32) NOT NULL,
       status VARCHAR(32) NOT NULL,
+      completedAt BIGINT NULL,
       createdAt BIGINT NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
@@ -203,6 +204,8 @@ export async function initSchema() {
   await ensureIndex('CREATE INDEX idx_orders_date_display ON orders(dateKey, displayNumber)');
   await ensureIndex('CREATE INDEX idx_orders_createdAt ON orders(createdAt)');
   await ensureIndex('CREATE INDEX idx_orders_status ON orders(status)');
+  await ensureColumn('ALTER TABLE orders ADD COLUMN completedAt BIGINT NULL');
+  await ensureIndex('CREATE INDEX idx_orders_completedAt ON orders(completedAt)');
   await ensureIndex('CREATE INDEX idx_orders_userId ON orders(userId)');
   await ensureIndex('CREATE INDEX idx_orders_phoneNumber ON orders(phoneNumber)');
   await ensureIndex('CREATE INDEX idx_print_jobs_status_created ON print_jobs(status, createdAt)');

@@ -940,7 +940,7 @@ app.post('/api/orders/create', async (c) => {
 
     const createdAt = Date.now();
     await pool.execute(
-      'INSERT INTO orders (id, orderNumber, displayNumber, dateKey, userId, phoneNumber, items, total, paymentMethod, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO orders (id, orderNumber, displayNumber, dateKey, userId, phoneNumber, items, total, paymentMethod, status, completedAt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         orderId,
         orderNumber,
@@ -952,6 +952,7 @@ app.post('/api/orders/create', async (c) => {
         effectiveTotal,
         paymentMethod || 'cash',
         'received',
+        null,
         createdAt,
       ]
     );
@@ -1237,11 +1238,12 @@ function mapOrderRow(row) {
     subtotalExclVat,
     vatAmount,
     totalWithVat,
-    status: row.status,
+    status: row.completedAt ? 'completed' : 'received',
     paymentMethod: row.paymentMethod,
     orderNumber: row.orderNumber,
     displayNumber: row.displayNumber,
     createdAt: Number(row.createdAt),
+    completedAt: row.completedAt != null ? Number(row.completedAt) : null,
   };
 }
 
@@ -1250,8 +1252,7 @@ app.get('/api/admin/orders/active', async (c) => {
   if (unauthorized) return unauthorized;
   try {
     const [rows] = await pool.execute(
-      'SELECT * FROM orders WHERE status != ? ORDER BY createdAt DESC',
-      ['completed']
+      'SELECT * FROM orders WHERE completedAt IS NULL ORDER BY createdAt DESC'
     );
     const orders = rows.map(mapOrderRow);
     return c.json({ success: true, orders });
@@ -1278,8 +1279,11 @@ app.get('/api/admin/orders/history', async (c) => {
     const params = [];
 
     if (status !== 'all') {
-      where.push('status = ?');
-      params.push(status);
+      if (status === 'completed') {
+        where.push('completedAt IS NOT NULL');
+      } else if (status === 'received') {
+        where.push('completedAt IS NULL');
+      }
     }
 
     if (from > 0) {
@@ -1325,8 +1329,11 @@ app.get('/api/admin/orders/history/days', async (c) => {
     const where = [];
     const params = [];
     if (status !== 'all') {
-      where.push('status = ?');
-      params.push(status);
+      if (status === 'completed') {
+        where.push('completedAt IS NOT NULL');
+      } else if (status === 'received') {
+        where.push('completedAt IS NULL');
+      }
     }
     if (from > 0) {
       where.push('createdAt >= ?');
@@ -1348,7 +1355,7 @@ app.get('/api/admin/orders/history/days', async (c) => {
         dateKey,
         COUNT(*) AS orders,
         COALESCE(SUM(total), 0) AS revenue,
-        SUM(status = 'completed') AS completed,
+        SUM(completedAt IS NOT NULL) AS completed,
         MAX(createdAt) AS lastOrderAt
       FROM orders
       ${whereSql}
@@ -1397,8 +1404,8 @@ app.get('/api/admin/orders/stats', async (c) => {
     const todayRevenue = Number(todayRows?.[0]?.revenue || 0);
 
     const [completedTodayRows] = await pool.execute(
-      'SELECT COUNT(*) AS completed FROM orders WHERE dateKey = ? AND status = ?',
-      [dateKey, 'completed']
+      'SELECT COUNT(*) AS completed FROM orders WHERE dateKey = ? AND completedAt IS NOT NULL',
+      [dateKey]
     );
     const todayCompleted = Number(completedTodayRows?.[0]?.completed || 0);
 
@@ -1425,7 +1432,11 @@ app.post('/api/admin/orders/:id/status', async (c) => {
       return c.json({ error: 'Only completed is allowed' }, 400);
     }
     const dbId = idParam.startsWith('order:') ? idParam : `order:${idParam}`;
-    await pool.execute('UPDATE orders SET status=? WHERE id=?', [status, dbId]);
+    await pool.execute('UPDATE orders SET status=?, completedAt=? WHERE id=?', [
+      status,
+      Date.now(),
+      dbId,
+    ]);
     return c.json({ success: true });
   } catch (e) {
     console.error('Error updating order status', e);
