@@ -553,6 +553,7 @@ export function MenuPage({
   };
 
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const noFrameCategoryIds = new Set(['not-coffee']);
 
   if (loading) {
     return (
@@ -581,7 +582,7 @@ export function MenuPage({
 
           <h1 className="text-sm text-[var(--matte-black)]">{text.menu}</h1>
 
-          {/* Keep space for layout symmetry; cart lives in categories bar */}
+          {/* Keep space for layout symmetry */}
           <div className="w-4" />
         </div>
 
@@ -599,25 +600,16 @@ export function MenuPage({
                 (isRTL ? 'pl-2' : 'pr-2')
               }
             >
-              {categories.map((category) => (
-                <div
-                  key={category.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    setActiveCategory(category.id);
-                    const element = document.getElementById(`category-${category.id}`);
-                    if (element) {
-                      const top =
-                        element.getBoundingClientRect().top +
-                        window.scrollY -
-                        (headerHeight || 0) -
-                        12;
-                      window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
+              {categories.map((category) => {
+                const isNoFrame =
+                  noFrameCategoryIds.has(category.id) ||
+                  category.nameEn?.toLowerCase().includes('not coffee');
+                return (
+                  <div
+                    key={category.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
                       setActiveCategory(category.id);
                       const element = document.getElementById(`category-${category.id}`);
                       if (element) {
@@ -628,22 +620,39 @@ export function MenuPage({
                           12;
                         window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
                       }
-                      e.preventDefault();
-                    }
-                  }}
-                  className={`flex flex-col items-center gap-0.5 flex-shrink-0 transition-all ${
-                    activeCategory === category.id ? 'opacity-100' : 'opacity-60'
-                  }`}
-                >
-                  <div
-                    className={`w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all relative overflow-hidden ${
-                      activeCategory === category.id
-                        ? 'border-[var(--espresso-brown)] scale-[1.03]'
-                        : 'border-[var(--matte-black)] border-opacity-30'
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        setActiveCategory(category.id);
+                        const element = document.getElementById(`category-${category.id}`);
+                        if (element) {
+                          const top =
+                            element.getBoundingClientRect().top +
+                            window.scrollY -
+                            (headerHeight || 0) -
+                            12;
+                          window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
+                        }
+                        e.preventDefault();
+                      }
+                    }}
+                    className={`flex flex-col items-center gap-1 flex-shrink-0 transition-all ${
+                      activeCategory === category.id ? 'opacity-100' : 'opacity-60'
                     }`}
                   >
-                    {activeCategory === category.id && (
-                      <span className="absolute -inset-1 rounded-full border border-[var(--espresso-brown)]/30 shadow-[0_0_0_5px_rgba(88,62,45,0.22)]" />
+                    <div
+                      className={`w-12 h-12 rounded-full flex items-center justify-center transition-all relative overflow-hidden ${
+                        activeCategory === category.id ? 'scale-[1.04]' : ''
+                      } ${isNoFrame ? 'border-0' : 'border-2'} ${
+                        isNoFrame
+                          ? 'border-transparent'
+                          : activeCategory === category.id
+                            ? 'border-[var(--espresso-brown)]'
+                            : 'border-[var(--matte-black)] border-opacity-30'
+                      }`}
+                    >
+                    {activeCategory === category.id && !isNoFrame && (
+                      <span className="absolute -inset-1 rounded-full border border-[var(--espresso-brown)]/30 shadow-[0_0_0_6px_rgba(88,62,45,0.22)]" />
                     )}
                     {(() => {
                       const iconById: Record<string, string> = {
@@ -657,8 +666,9 @@ export function MenuPage({
                         sweets: sweetsIcon,
                       };
                       const icon = iconById[category.id] || category.iconUrl || '';
-                      if (!icon)
+                      if (!icon) {
                         return <ShoppingBag size={16} className="text-[var(--matte-black)]" />;
+                      }
 
                       const resolved =
                         icon.startsWith('figma:asset') || icon.includes('example.com')
@@ -669,12 +679,12 @@ export function MenuPage({
                         <img
                           src={resolved}
                           alt={language === 'en' ? category.nameEn : category.nameAr}
-                          className="max-w-[64%] max-h-[64%] object-contain"
+                          className="max-w-[70%] max-h-[70%] object-contain"
                         />
                       );
                     })()}
                   </div>
-                  <span className="text-[9px] text-[var(--matte-black)] text-center leading-tight max-w-[55px]">
+                  <span className="text-[10px] text-[var(--matte-black)] text-center leading-tight max-w-[70px]">
                     {language === 'en' ? category.nameEn : category.nameAr}
                   </span>
                   {isAdmin && (
@@ -699,50 +709,22 @@ export function MenuPage({
                       </button>
                     </div>
                   )}
-                </div>
-              ))}
+                  </div>
+                );
+              })}
 
               {isAdmin && (
                 <button
                   onClick={() => setShowNewCategory(true)}
                   className="flex flex-col items-center gap-2 flex-shrink-0"
                 >
-                  <div className="w-16 h-16 rounded-full border-2 border-dashed border-[var(--matte-black)] flex items-center justify-center hover:border-[var(--espresso-brown)] transition-colors">
-                    <Plus size={24} />
+                  <div className="w-12 h-12 rounded-full border-2 border-dashed border-[var(--matte-black)] flex items-center justify-center hover:border-[var(--espresso-brown)] transition-colors">
+                    <Plus size={20} />
                   </div>
                   <span className="text-xs">Add</span>
                 </button>
               )}
             </div>
-
-            <button
-              onClick={() => onOpenCart()}
-              aria-label="Open cart"
-              className={`relative flex-shrink-0 w-11 h-11 rounded-full border-2 transition-all ${
-                cartItemCount > 0
-                  ? 'border-[var(--espresso-brown)] bg-[var(--espresso-brown)] text-[var(--crisp-white)] shadow-[0_6px_14px_rgba(88,62,45,0.25)]'
-                  : 'border-[var(--matte-black)] bg-[var(--crisp-white)] hover:bg-[var(--cool-gray)]'
-              }`}
-            >
-              <div className="w-full h-full flex items-center justify-center">
-                <ShoppingBag
-                  size={18}
-                  className={
-                    cartItemCount > 0 ? 'text-[var(--crisp-white)]' : 'text-[var(--matte-black)]'
-                  }
-                />
-              </div>
-              {cartItemCount > 0 && (
-                <span
-                  className={
-                    `absolute -top-1 bg-[var(--crisp-white)] text-[var(--espresso-brown)] text-[10px] min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border border-[var(--espresso-brown)] ` +
-                    (isRTL ? '-left-1' : '-right-1')
-                  }
-                >
-                  {cartItemCount}
-                </span>
-              )}
-            </button>
           </div>
 
           {/* Edit Category Modal */}
@@ -856,6 +838,24 @@ export function MenuPage({
 
       {/* Spacer so content doesn't sit under fixed header */}
       <div style={{ height: headerHeight }} />
+
+      {/* Floating Cart Button */}
+      <button
+        onClick={() => onOpenCart()}
+        aria-label="Open cart"
+        className={`fixed bottom-5 right-5 z-50 flex items-center justify-center w-12 h-12 rounded-full transition-all backdrop-blur ${
+          cartItemCount > 0
+            ? 'bg-[var(--espresso-brown)] text-[var(--crisp-white)] shadow-[0_10px_22px_rgba(88,62,45,0.35)]'
+            : 'bg-transparent text-[var(--matte-black)]/70 hover:text-[var(--espresso-brown)]'
+        }`}
+      >
+        <ShoppingBag size={20} />
+        {cartItemCount > 0 && (
+          <span className="absolute -top-1 -right-1 bg-[var(--crisp-white)] text-[var(--espresso-brown)] text-[10px] min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border border-[var(--espresso-brown)]">
+            {cartItemCount}
+          </span>
+        )}
+      </button>
 
       {/* Menu Items by Category */}
       <div className="p-3">
