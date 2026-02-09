@@ -1384,16 +1384,10 @@ app.get('/api/admin/orders/stats', async (c) => {
     const dateKey = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
 
     const [liveRows] = await pool.execute(
-      'SELECT status, COUNT(*) AS count FROM orders WHERE status != ? GROUP BY status',
+      'SELECT COUNT(*) AS count FROM orders WHERE status != ?',
       ['completed']
     );
-    const liveByStatus = { received: 0, preparing: 0, ready: 0 };
-    for (const r of liveRows) {
-      const s = String(r.status || '');
-      const n = Number(r.count || 0);
-      if (s === 'received' || s === 'preparing' || s === 'ready') liveByStatus[s] = n;
-    }
-    const liveTotal = liveByStatus.received + liveByStatus.preparing + liveByStatus.ready;
+    const liveTotal = Number(liveRows?.[0]?.count || 0);
 
     const [todayRows] = await pool.execute(
       'SELECT COUNT(*) AS orders, COALESCE(SUM(total), 0) AS revenue FROM orders WHERE dateKey = ?',
@@ -1410,7 +1404,7 @@ app.get('/api/admin/orders/stats', async (c) => {
 
     return c.json({
       success: true,
-      live: { total: liveTotal, ...liveByStatus },
+      live: { total: liveTotal },
       today: { dateKey, orders: todayOrders, completed: todayCompleted, revenue: todayRevenue },
     });
   } catch (e) {
@@ -1427,6 +1421,9 @@ app.post('/api/admin/orders/:id/status', async (c) => {
     const idParam = c.req.param('id');
     const { status } = await c.req.json();
     if (!status) return c.json({ error: 'Status required' }, 400);
+    if (status !== 'completed') {
+      return c.json({ error: 'Only completed is allowed' }, 400);
+    }
     const dbId = idParam.startsWith('order:') ? idParam : `order:${idParam}`;
     await pool.execute('UPDATE orders SET status=? WHERE id=?', [status, dbId]);
     return c.json({ success: true });

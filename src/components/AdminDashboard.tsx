@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Users, ClipboardList, Utensils, RefreshCw, History } from 'lucide-react';
+import { ArrowLeft, Users, ClipboardList, Utensils, RefreshCw } from 'lucide-react';
 import { AdminPanel } from './AdminPanel';
 import { apiBaseUrl } from '../utils/supabase/info';
 
@@ -9,7 +9,7 @@ interface AdminDashboardProps {
   language: 'en' | 'ar';
 }
 
-type Tab = 'live-orders' | 'orders-history' | 'menu' | 'customers';
+type Tab = 'live-orders' | 'menu' | 'customers';
 
 interface CustomerSummary {
   customerKey?: string | null;
@@ -25,7 +25,7 @@ interface CustomerSummary {
 }
 
 interface OrderStats {
-  live: { total: number; received: number; preparing: number; ready: number };
+  live: { total: number };
   today: { dateKey: string; orders: number; completed: number; revenue: number };
 }
 
@@ -41,12 +41,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
         // Backward compatibility: old routes used "orders"
         const normalized = parts[1] === 'orders' ? 'live-orders' : parts[1];
         const tab = normalized as Tab;
-        if (
-          tab === 'live-orders' ||
-          tab === 'orders-history' ||
-          tab === 'menu' ||
-          tab === 'customers'
-        ) {
+        if (tab === 'live-orders' || tab === 'menu' || tab === 'customers') {
           setActiveTab(tab);
         }
       }
@@ -250,8 +245,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
                 </div>
                 <div className="text-2xl text-[var(--matte-black)] mt-1">{stats.live.total}</div>
                 <div className="text-xs text-[var(--matte-black)] opacity-70 mt-1">
-                  {text.received}: {stats.live.received} · {text.preparing}: {stats.live.preparing}{' '}
-                  · {text.ready}: {stats.live.ready}
+                  {text.orders}
                 </div>
               </div>
 
@@ -305,12 +299,6 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
             )}
           </button>
           <button
-            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 ${activeTab === 'orders-history' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
-            onClick={() => setTab('orders-history')}
-          >
-            <History size={16} /> {text.historyTab}
-          </button>
-          <button
             className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 ${activeTab === 'menu' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
             onClick={() => setTab('menu')}
           >
@@ -336,17 +324,6 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
             embedded={true}
             limitedControl={true}
             ordersMode="live"
-          />
-        )}
-        {activeTab === 'orders-history' && (
-          <AdminPanel
-            onBack={onBack}
-            sessionToken={sessionToken}
-            language={language}
-            initialTab="orders"
-            embedded={true}
-            limitedControl={true}
-            ordersMode="history"
           />
         )}
         {activeTab === 'menu' && (

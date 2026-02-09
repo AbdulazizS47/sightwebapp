@@ -4,7 +4,7 @@ import { apiBaseUrl } from '../utils/supabase/info';
 
 type Language = 'en' | 'ar';
 
-type OrderStatus = 'received' | 'preparing' | 'ready' | 'completed';
+type OrderStatus = 'received' | 'completed';
 
 interface OrderItem {
   name: string;
@@ -115,7 +115,7 @@ export function OrderTrackingPage({
     return () => clearInterval(t);
   }, [order, load]);
 
-  const steps: OrderStatus[] = ['received', 'preparing', 'ready', 'completed'];
+  const steps: OrderStatus[] = ['received', 'completed'];
   const currentIdx = order ? steps.indexOf(order.status) : 0;
 
   return (
@@ -169,7 +169,7 @@ export function OrderTrackingPage({
               </div>
 
               <div className="mt-4" dir="ltr">
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   {steps.map((s, idx) => {
                     const done = idx <= currentIdx;
                     return (
