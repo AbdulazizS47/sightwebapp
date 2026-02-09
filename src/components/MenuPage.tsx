@@ -641,8 +641,8 @@ export function MenuPage({
                     }`}
                   >
                     <div
-                      className={`w-12 h-12 rounded-full flex items-center justify-center transition-all relative overflow-hidden ${
-                        activeCategory === category.id ? 'scale-[1.04]' : ''
+                      className={`w-10 h-10 rounded-full flex items-center justify-center transition-all relative overflow-hidden ${
+                        activeCategory === category.id ? 'scale-[1.02]' : ''
                       } ${isNoFrame ? 'border-0' : 'border-2'} ${
                         isNoFrame
                           ? 'border-transparent'
@@ -679,12 +679,12 @@ export function MenuPage({
                         <img
                           src={resolved}
                           alt={language === 'en' ? category.nameEn : category.nameAr}
-                          className="max-w-[70%] max-h-[70%] object-contain"
+                          className="w-6 h-6 object-contain"
                         />
                       );
                     })()}
                   </div>
-                  <span className="text-[10px] text-[var(--matte-black)] text-center leading-tight max-w-[70px]">
+                  <span className="text-[9px] text-[var(--matte-black)] text-center leading-tight max-w-[64px]">
                     {language === 'en' ? category.nameEn : category.nameAr}
                   </span>
                   {isAdmin && (
@@ -718,8 +718,8 @@ export function MenuPage({
                   onClick={() => setShowNewCategory(true)}
                   className="flex flex-col items-center gap-2 flex-shrink-0"
                 >
-                  <div className="w-12 h-12 rounded-full border-2 border-dashed border-[var(--matte-black)] flex items-center justify-center hover:border-[var(--espresso-brown)] transition-colors">
-                    <Plus size={20} />
+                  <div className="w-10 h-10 rounded-full border-2 border-dashed border-[var(--matte-black)] flex items-center justify-center hover:border-[var(--espresso-brown)] transition-colors">
+                    <Plus size={16} />
                   </div>
                   <span className="text-xs">Add</span>
                 </button>
@@ -843,15 +843,15 @@ export function MenuPage({
       <button
         onClick={() => onOpenCart()}
         aria-label="Open cart"
-        className={`fixed bottom-5 right-5 z-50 flex items-center justify-center w-12 h-12 rounded-full transition-all backdrop-blur ${
+        className={`fixed bottom-5 right-5 z-50 flex items-center justify-center w-12 h-12 rounded-full transition-all backdrop-blur border ${
           cartItemCount > 0
-            ? 'bg-[var(--espresso-brown)] text-[var(--crisp-white)] shadow-[0_10px_22px_rgba(88,62,45,0.35)]'
-            : 'bg-transparent text-[var(--matte-black)]/70 hover:text-[var(--espresso-brown)]'
+            ? 'bg-[var(--espresso-brown)] text-[var(--crisp-white)] border-[var(--espresso-brown)] shadow-[0_10px_22px_rgba(88,62,45,0.35)]'
+            : 'bg-[var(--crisp-white)]/80 text-[var(--matte-black)] border-[var(--matte-black)]/30 shadow-[0_6px_16px_rgba(0,0,0,0.08)] hover:border-[var(--espresso-brown)] hover:text-[var(--espresso-brown)]'
         }`}
       >
-        <ShoppingBag size={20} />
+        <ShoppingBag size={18} />
         {cartItemCount > 0 && (
-          <span className="absolute -top-1 -right-1 bg-[var(--crisp-white)] text-[var(--espresso-brown)] text-[10px] min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border border-[var(--espresso-brown)]">
+          <span className="absolute -top-1 -right-1 bg-[var(--crisp-white)] text-[var(--espresso-brown)] text-[10px] min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border border-[var(--espresso-brown)] shadow-[0_2px_6px_rgba(0,0,0,0.12)]">
             {cartItemCount}
           </span>
         )}
