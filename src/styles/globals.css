@@ -1,0 +1,89 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Work+Sans:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Almarai:wght@300;400;700;800&display=swap');
+
+@layer base {
+  :root {
+    /* SIGHT Color System */
+    --crisp-white: #FFFFFF;
+    --matte-black: #1C1C1C;
+    --espresso-brown: #4F3A2C;
+    --cool-gray: #F5F5F5;
+    
+    /* Semantic tokens */
+    --background: var(--crisp-white);
+    --foreground: var(--matte-black);
+    --accent: var(--espresso-brown);
+    --subtle: var(--cool-gray);
+  }
+
+  * {
+    @apply border-[var(--matte-black)];
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-[var(--background)] text-[var(--foreground)];
+    font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    letter-spacing: 0.02em;
+  }
+
+  /* Arabic font styling */
+  [dir="rtl"] body,
+  [dir="rtl"] *,
+  [lang="ar"],
+  [lang="ar"] * {
+    font-family: 'Almarai', 'Arial', sans-serif;
+    letter-spacing: 0;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    letter-spacing: 0.05em;
+    font-weight: 700;
+  }
+
+  [dir="rtl"] h1, [dir="rtl"] h2, [dir="rtl"] h3, [dir="rtl"] h4, [dir="rtl"] h5, [dir="rtl"] h6,
+  [lang="ar"] h1, [lang="ar"] h2, [lang="ar"] h3, [lang="ar"] h4, [lang="ar"] h5, [lang="ar"] h6 {
+    font-family: 'Almarai', 'Arial', sans-serif;
+    letter-spacing: 0;
+    font-weight: 800;
+  }
+
+  button {
+    font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  [dir="rtl"] button,
+  [lang="ar"] button {
+    font-family: 'Almarai', 'Arial', sans-serif;
+    letter-spacing: 0;
+  }
+
+  input, textarea {
+    font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    letter-spacing: 0.03em;
+  }
+
+  [dir="rtl"] input, [dir="rtl"] textarea,
+  [lang="ar"] input, [lang="ar"] textarea {
+    font-family: 'Almarai', 'Arial', sans-serif;
+    letter-spacing: 0;
+  }
+
+  /* Hide scrollbar but keep functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}

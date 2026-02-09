@@ -1,0 +1,196 @@
+import 'dotenv/config';
+import mysql from 'mysql2/promise';
+
+const {
+  MYSQL_HOST = 'localhost',
+  MYSQL_PORT = '3306',
+  MYSQL_USER = 'root',
+  MYSQL_PASSWORD = '',
+  MYSQL_DATABASE = 'sight_app',
+} = process.env;
+
+export const pool = mysql.createPool({
+  host: MYSQL_HOST,
+  port: Number(MYSQL_PORT),
+  user: MYSQL_USER,
+  password: MYSQL_PASSWORD,
+  database: MYSQL_DATABASE,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+});
+
+export async function ensureDatabase() {
+  // Use a connection without selecting a database to ensure it exists
+  const conn = await mysql.createConnection({
+    host: MYSQL_HOST,
+    port: Number(MYSQL_PORT),
+    user: MYSQL_USER,
+    password: MYSQL_PASSWORD,
+    multipleStatements: true,
+  });
+  await conn.query(
+    `CREATE DATABASE IF NOT EXISTS \`${MYSQL_DATABASE}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`
+  );
+  await conn.end();
+}
+
+export async function initSchema() {
+  // Create tables if they don't exist
+  await pool.execute(
+    `
+    CREATE TABLE IF NOT EXISTS categories (
+      id VARCHAR(64) PRIMARY KEY,
+      nameEn VARCHAR(255) NOT NULL,
+      nameAr VARCHAR(255) NOT NULL,
+      ` +
+      '`order`' +
+      ` INT NOT NULL,
+      iconUrl VARCHAR(1024) NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `
+  );
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS items (
+      id VARCHAR(64) PRIMARY KEY,
+      nameEn VARCHAR(255) NOT NULL,
+      nameAr VARCHAR(255) NOT NULL,
+      price DECIMAL(10,2) NOT NULL,
+      category VARCHAR(64) NOT NULL,
+      description TEXT NULL,
+      imageUrl VARCHAR(1024) NULL,
+      available TINYINT(1) NOT NULL DEFAULT 1,
+      FOREIGN KEY (category) REFERENCES categories(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS orders (
+      id VARCHAR(64) PRIMARY KEY,
+      orderNumber VARCHAR(32) NOT NULL,
+      displayNumber INT NOT NULL,
+      dateKey VARCHAR(16) NOT NULL,
+      userId VARCHAR(64) NULL,
+      phoneNumber VARCHAR(32) NULL,
+      items JSON NOT NULL,
+      total DECIMAL(10,2) NOT NULL,
+      paymentMethod VARCHAR(32) NOT NULL,
+      status VARCHAR(32) NOT NULL,
+      createdAt BIGINT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS order_counters (
+      dateKey VARCHAR(16) PRIMARY KEY,
+      currentNumber INT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // New tables for user profiles and loyalty
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS users (
+      id VARCHAR(64) PRIMARY KEY,
+      phoneNumber VARCHAR(32) UNIQUE NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) NULL,
+      language VARCHAR(16) NULL,
+      role VARCHAR(32) NOT NULL,
+      createdAt BIGINT NOT NULL,
+      updatedAt BIGINT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS loyalty_accounts (
+      userId VARCHAR(64) PRIMARY KEY,
+      points INT NOT NULL DEFAULT 0,
+      tier VARCHAR(32) NOT NULL DEFAULT 'basic',
+      enabled TINYINT(1) NOT NULL DEFAULT 0,
+      enrollmentDate BIGINT NULL,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      token VARCHAR(128) PRIMARY KEY,
+      userId VARCHAR(64) NOT NULL,
+      createdAt BIGINT NOT NULL,
+      lastSeenAt BIGINT NOT NULL,
+      expiresAt BIGINT NULL,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS print_jobs (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      orderId VARCHAR(64) NOT NULL,
+      status VARCHAR(16) NOT NULL DEFAULT 'pending',
+      attempts INT NOT NULL DEFAULT 0,
+      lastError TEXT NULL,
+      claimedAt BIGINT NULL,
+      printedAt BIGINT NULL,
+      createdAt BIGINT NOT NULL,
+      FOREIGN KEY (orderId) REFERENCES orders(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS otp_codes (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      phoneNumber VARCHAR(32) NOT NULL,
+      codeHash CHAR(64) NOT NULL,
+      attempts INT NOT NULL DEFAULT 0,
+      createdAt BIGINT NOT NULL,
+      expiresAt BIGINT NOT NULL,
+      consumedAt BIGINT NULL,
+      INDEX idx_otp_phone_created (phoneNumber, createdAt),
+      INDEX idx_otp_expires (expiresAt)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // Best-effort indexes (ignore if already present)
+  const ensureIndex = async (sql) => {
+    try {
+      await pool.execute(sql);
+    } catch {
+      // ignore duplicate index / older mysql quirks
+    }
+  };
+  const ensureColumn = async (sql) => {
+    try {
+      await pool.execute(sql);
+    } catch {
+      // ignore if column already exists
+    }
+  };
+
+  await ensureColumn('ALTER TABLE sessions ADD COLUMN expiresAt BIGINT NULL');
+  await ensureIndex('CREATE UNIQUE INDEX idx_orders_orderNumber ON orders(orderNumber)');
+  await ensureIndex('CREATE INDEX idx_orders_date_display ON orders(dateKey, displayNumber)');
+  await ensureIndex('CREATE INDEX idx_orders_createdAt ON orders(createdAt)');
+  await ensureIndex('CREATE INDEX idx_orders_status ON orders(status)');
+  await ensureIndex('CREATE INDEX idx_orders_userId ON orders(userId)');
+  await ensureIndex('CREATE INDEX idx_orders_phoneNumber ON orders(phoneNumber)');
+  await ensureIndex('CREATE INDEX idx_print_jobs_status_created ON print_jobs(status, createdAt)');
+  await ensureIndex('CREATE INDEX idx_print_jobs_orderId ON print_jobs(orderId)');
+}
+
+export async function getTodayNextDisplayNumber(dateKey) {
+  // Atomic counter per dateKey (safe under concurrency)
+  const conn = await pool.getConnection();
+  try {
+    const [res] = await conn.execute(
+      'INSERT INTO order_counters (dateKey, currentNumber) VALUES (?, 1) ON DUPLICATE KEY UPDATE currentNumber = LAST_INSERT_ID(currentNumber + 1)',
+      [dateKey]
+    );
+    // mysql2 returns insertId with LAST_INSERT_ID value
+    const next = Number(res.insertId || 1);
+    return next;
+  } finally {
+    conn.release();
+  }
+}

@@ -1,0 +1,291 @@
+package sight.printbridge
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.text.TextPaint
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+class ReceiptRenderer(private val context: Context) {
+  private val widthPx = 384
+  private val margin = 16f
+
+  private fun loadArabicTypeface(): Typeface {
+    return try {
+      Typeface.createFromAsset(context.assets, "fonts/Cairo-Regular.ttf")
+    } catch (_: Exception) {
+      Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+    }
+  }
+
+  fun render(order: Order, logo: Bitmap?): Bitmap {
+    val typeface = loadArabicTypeface()
+    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = Color.BLACK
+      textSize = 22f
+      this.typeface = typeface
+    }
+    val textSmall = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = Color.BLACK
+      textSize = 18f
+      this.typeface = typeface
+    }
+    val textMuted = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = Color.DKGRAY
+      textSize = 18f
+      this.typeface = typeface
+    }
+    val textLarge = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = Color.BLACK
+      textSize = 36f
+      this.typeface = typeface
+    }
+    val textMedium = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = Color.BLACK
+      textSize = 20f
+      this.typeface = typeface
+    }
+    val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = Color.BLACK
+      strokeWidth = 2f
+    }
+    val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = Color.BLACK
+      style = Paint.Style.STROKE
+      strokeWidth = 2f
+    }
+
+    val height = measureHeight(order, logo, text, textSmall, textMuted)
+    val bitmap = Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    canvas.drawColor(Color.WHITE)
+
+    var y = 0f
+    if (logo != null) {
+      val logoWidth = (widthPx * 0.65f).toInt()
+      val logoHeight = (logoWidth.toFloat() / logo.width * logo.height).toInt()
+      val scaled = Bitmap.createScaledBitmap(logo, logoWidth, logoHeight, true)
+      val x = (widthPx - logoWidth) / 2f
+      canvas.drawBitmap(scaled, x, y + 6f, null)
+      y += logoHeight + 18f
+    } else {
+      y += 6f
+    }
+
+    // Order number block
+    val blockHeight = 96f
+    canvas.drawRect(margin, y, widthPx - margin, y + blockHeight, framePaint)
+    val orderLabel = "Order Number / رقم الطلب"
+    drawCenteredText(canvas, orderLabel, textMuted, y + 24f)
+    val display = "#${order.displayNumber}"
+    drawCenteredText(canvas, toEnglishDigits(display), textLarge, y + 64f)
+    y += blockHeight + 18f
+
+    // Date and time row
+    val dateTime = formatDateTime(order.createdAt)
+    drawLabelValue(
+      canvas,
+      "Date / التاريخ",
+      dateTime.first,
+      margin,
+      y,
+      textMuted,
+      textSmall,
+      alignRight = false
+    )
+    drawLabelValue(
+      canvas,
+      "Time / الوقت",
+      dateTime.second,
+      widthPx - margin,
+      y,
+      textMuted,
+      textSmall,
+      alignRight = true
+    )
+    y += textSmall.textSize + textMuted.textSize + 18f
+
+    // Items header
+    canvas.drawText("Items / العناصر", margin, y + textMuted.textSize, textMuted)
+    y += textMuted.textSize + 10f
+
+    // Items list
+    order.items.forEach { item ->
+      val qtyName = "${item.quantity}x ${item.name}"
+      val price = "${formatMoney(item.price * item.quantity)} SAR"
+      y = drawItemRow(canvas, qtyName, price, y, textSmall)
+    }
+
+    y += 8f
+    canvas.drawLine(margin, y, widthPx - margin, y, linePaint)
+    y += 12f
+
+    // Totals
+    y = drawTotalRow(canvas, "Subtotal / المجموع", order.subtotalExclVat, y, textSmall, bold = false)
+    y = drawTotalRow(canvas, "VAT (15%) / ضريبة", order.vatAmount, y, textSmall, bold = false)
+    canvas.drawLine(margin, y + 4f, widthPx - margin, y + 4f, linePaint)
+    y += 14f
+    y = drawTotalRow(canvas, "Total / الإجمالي", order.totalWithVat, y, textSmall, bold = true)
+
+    // Footer
+    y += 12f
+    drawCenteredText(canvas, "share with us @sightcafee شاركنا رايك على", textMuted, y + textMuted.textSize)
+
+    return bitmap
+  }
+
+  private fun measureHeight(
+    order: Order,
+    logo: Bitmap?,
+    text: Paint,
+    textSmall: TextPaint,
+    textMuted: TextPaint,
+  ): Int {
+    var h = 0f
+    if (logo != null) {
+      val logoWidth = (widthPx * 0.65f).toInt()
+      val logoHeight = (logoWidth.toFloat() / logo.width * logo.height).toInt()
+      h += logoHeight + 18f
+    } else {
+      h += 6f
+    }
+    h += 96f + 18f // order block
+    h += textSmall.textSize + textMuted.textSize + 18f // date/time
+    h += textMuted.textSize + 10f // items header
+    order.items.forEach { item ->
+      val lines = wrapLines("${item.quantity}x ${item.name}", textSmall, widthPx - margin * 2 - 96f)
+      h += lines.size * (textSmall.textSize + 6f)
+    }
+    h += 8f + 12f // divider spacing
+    h += (textSmall.textSize + 8f) * 3 // subtotal, vat, total
+    h += 26f // footer
+    return (h + 24f).toInt().coerceAtLeast(200)
+  }
+
+  private fun drawCenteredText(canvas: Canvas, text: String, paint: TextPaint, y: Float) {
+    val clean = toEnglishDigits(text)
+    val x = (widthPx - paint.measureText(clean)) / 2f
+    canvas.drawText(clean, x, y, paint)
+  }
+
+  private fun drawLabelValue(
+    canvas: Canvas,
+    label: String,
+    value: String,
+    x: Float,
+    y: Float,
+    labelPaint: TextPaint,
+    valuePaint: TextPaint,
+    alignRight: Boolean,
+  ) {
+    val labelText = toEnglishDigits(label)
+    val valueText = toEnglishDigits(value)
+    val labelY = y + labelPaint.textSize
+    val valueY = labelY + valuePaint.textSize + 4f
+    if (alignRight) {
+      canvas.drawText(labelText, x - labelPaint.measureText(labelText), labelY, labelPaint)
+      canvas.drawText(valueText, x - valuePaint.measureText(valueText), valueY, valuePaint)
+    } else {
+      canvas.drawText(labelText, x, labelY, labelPaint)
+      canvas.drawText(valueText, x, valueY, valuePaint)
+    }
+  }
+
+  private fun drawItemRow(
+    canvas: Canvas,
+    leftText: String,
+    rightText: String,
+    y: Float,
+    paint: TextPaint,
+  ): Float {
+    val price = toEnglishDigits(rightText)
+    val priceWidth = paint.measureText(price)
+    val leftWidth = widthPx - margin * 2 - priceWidth - 8f
+    val lines = wrapLines(leftText, paint, leftWidth)
+    var yCursor = y
+    lines.forEachIndexed { idx, line ->
+      val lineY = yCursor + paint.textSize
+      canvas.drawText(toEnglishDigits(line), margin, lineY, paint)
+      if (idx == 0) {
+        canvas.drawText(price, widthPx - margin - priceWidth, lineY, paint)
+      }
+      yCursor += paint.textSize + 6f
+    }
+    return yCursor
+  }
+
+  private fun drawTotalRow(
+    canvas: Canvas,
+    label: String,
+    value: Double,
+    y: Float,
+    paint: TextPaint,
+    bold: Boolean,
+  ): Float {
+    val labelText = label
+    val valueText = "${formatMoney(value)} SAR"
+    val lineY = y + paint.textSize
+    val labelPaint = if (bold) {
+      TextPaint(paint).apply { typeface = Typeface.create(paint.typeface, Typeface.BOLD) }
+    } else {
+      paint
+    }
+    val valuePaint = if (bold) {
+      TextPaint(paint).apply { typeface = Typeface.create(paint.typeface, Typeface.BOLD) }
+    } else {
+      paint
+    }
+    canvas.drawText(labelText, margin, lineY, labelPaint)
+    val valueWidth = valuePaint.measureText(valueText)
+    canvas.drawText(toEnglishDigits(valueText), widthPx - margin - valueWidth, lineY, valuePaint)
+    return y + paint.textSize + 8f
+  }
+
+  private fun formatDateTime(ts: Long): Pair<String, String> {
+    val dfDate = SimpleDateFormat("MMMM d, yyyy", Locale.US)
+    val dfTime = SimpleDateFormat("hh:mm a", Locale.US)
+    return Pair(dfDate.format(Date(ts)), dfTime.format(Date(ts)))
+  }
+
+  private fun formatMoney(value: Double): String {
+    return String.format(Locale.US, "%.2f", value)
+  }
+
+  private fun toEnglishDigits(input: String): String {
+    val arabic = "٠١٢٣٤٥٦٧٨٩"
+    val eastern = "۰۱۲۳۴۵۶۷۸۹"
+    val sb = StringBuilder(input.length)
+    for (ch in input) {
+      val idxA = arabic.indexOf(ch)
+      val idxE = eastern.indexOf(ch)
+      when {
+        idxA >= 0 -> sb.append(idxA)
+        idxE >= 0 -> sb.append(idxE)
+        else -> sb.append(ch)
+      }
+    }
+    return sb.toString()
+  }
+
+  private fun wrapLines(text: String, paint: TextPaint, maxWidth: Float): List<String> {
+    val words = text.split(" ")
+    val lines = mutableListOf<String>()
+    var line = ""
+    words.forEach { word ->
+      val candidate = if (line.isEmpty()) word else "$line $word"
+      if (paint.measureText(candidate) <= maxWidth) {
+        line = candidate
+      } else {
+        if (line.isNotEmpty()) lines.add(line)
+        line = word
+      }
+    }
+    if (line.isNotEmpty()) lines.add(line)
+    return lines
+  }
+}

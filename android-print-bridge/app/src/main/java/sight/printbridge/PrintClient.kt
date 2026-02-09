@@ -1,0 +1,93 @@
+package sight.printbridge
+
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
+
+class PrintClient(private val serverUrl: String, private val deviceKey: String) {
+  private val client = OkHttpClient()
+  private val jsonMedia = "application/json".toMediaType()
+
+  fun claimJob(): PrintJob? {
+    val request = Request.Builder()
+      .url("${serverUrl.trimEnd('/')}/api/print/jobs/claim")
+      .addHeader("X-Device-Key", deviceKey)
+      .post("{}".toRequestBody(jsonMedia))
+      .build()
+
+    client.newCall(request).execute().use { resp ->
+      val body = resp.body?.string() ?: ""
+      if (!resp.isSuccessful) {
+        val msg = if (body.isNotBlank()) body else "HTTP ${resp.code}"
+        throw IllegalStateException("Claim failed: $msg")
+      }
+      val json = JSONObject(body)
+      if (!json.optBoolean("success", false)) {
+        val err = json.optString("error", "Unknown error")
+        throw IllegalStateException("Claim failed: $err")
+      }
+      val jobObj = json.optJSONObject("job") ?: return null
+      if (jobObj == JSONObject.NULL) return null
+
+      val orderObj = jobObj.getJSONObject("order")
+      val items = orderObj.getJSONArray("items").toOrderItems()
+
+      val order = Order(
+        id = orderObj.getString("id"),
+        orderNumber = orderObj.getString("orderNumber"),
+        displayNumber = orderObj.optInt("displayNumber", 0),
+        createdAt = orderObj.optLong("createdAt", System.currentTimeMillis()),
+        phoneNumber = orderObj.optString("phoneNumber", null),
+        paymentMethod = orderObj.optString("paymentMethod", "cash"),
+        status = orderObj.optString("status", "received"),
+        items = items,
+        subtotalExclVat = orderObj.optDouble("subtotalExclVat", 0.0),
+        vatAmount = orderObj.optDouble("vatAmount", 0.0),
+        totalWithVat = orderObj.optDouble("totalWithVat", orderObj.optDouble("total", 0.0)),
+      )
+
+      return PrintJob(
+        id = jobObj.getLong("id"),
+        orderId = jobObj.getString("orderId"),
+        order = order,
+      )
+    }
+  }
+
+  fun ack(jobId: Long) {
+    val req = Request.Builder()
+      .url("${serverUrl.trimEnd('/')}/api/print/jobs/${jobId}/ack")
+      .addHeader("X-Device-Key", deviceKey)
+      .post("{}".toRequestBody(jsonMedia))
+      .build()
+    client.newCall(req).execute().close()
+  }
+
+  fun fail(jobId: Long, error: String) {
+    val body = JSONObject(mapOf("error" to error)).toString()
+    val req = Request.Builder()
+      .url("${serverUrl.trimEnd('/')}/api/print/jobs/${jobId}/fail")
+      .addHeader("X-Device-Key", deviceKey)
+      .post(body.toRequestBody(jsonMedia))
+      .build()
+    client.newCall(req).execute().close()
+  }
+}
+
+private fun JSONArray.toOrderItems(): List<OrderItem> {
+  val items = mutableListOf<OrderItem>()
+  for (i in 0 until length()) {
+    val obj = getJSONObject(i)
+    items.add(
+      OrderItem(
+        name = obj.optString("name", ""),
+        price = obj.optDouble("price", 0.0),
+        quantity = obj.optInt("quantity", 1),
+      )
+    )
+  }
+  return items
+}

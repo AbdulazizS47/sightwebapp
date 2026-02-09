@@ -1,0 +1,14 @@
+<resources>
+  <string name="app_name">Print Bridge</string>
+  <string name="title">Print Bridge</string>
+  <string name="server_url">Server URL</string>
+  <string name="device_key">Device Key</string>
+  <string name="printer">Printer</string>
+  <string name="connect">Connect</string>
+  <string name="disconnect">Disconnect</string>
+  <string name="test_print">Test Print</string>
+  <string name="start">Start</string>
+  <string name="stop">Stop</string>
+  <string name="status">Status</string>
+  <string name="last_error">Last Error</string>
+</resources>
