@@ -1,5 +1,15 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { Plus, ShoppingBag, ArrowLeft, Edit2, Save, Trash2 } from 'lucide-react';
+import {
+  Plus,
+  ShoppingBag,
+  ShoppingCart,
+  ArrowLeft,
+  Edit2,
+  Save,
+  Trash2,
+  Coffee,
+  Slash,
+} from 'lucide-react';
 import categoryFallback from 'figma:asset/6a698afc3834913c1c2ac422fa5bd04b815dc28c.png';
 import coffeeIcon from '../assets/COFFEE.png';
 import v60Icon from '../assets/V60.png';
@@ -596,7 +606,7 @@ export function MenuPage({
           >
             <div
               className={
-                `flex gap-2.5 overflow-x-auto overflow-y-visible scrollbar-hide flex-1 ` +
+                `flex gap-2 overflow-x-auto overflow-y-visible scrollbar-hide flex-1 ` +
                 (isRTL ? 'pl-2' : 'pr-2')
               }
             >
@@ -641,7 +651,7 @@ export function MenuPage({
                     }`}
                   >
                     <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center transition-all relative overflow-hidden ${
+                      className={`w-9 h-9 rounded-full flex items-center justify-center transition-all relative overflow-hidden ${
                         activeCategory === category.id ? 'scale-[1.02]' : ''
                       } ${isNoFrame ? 'border-0' : 'border-2'} ${
                         isNoFrame
@@ -666,6 +676,19 @@ export function MenuPage({
                         sweets: sweetsIcon,
                       };
                       const icon = iconById[category.id] || category.iconUrl || '';
+                      if (isNoFrame) {
+                        return (
+                          <div className="relative w-5 h-5 flex items-center justify-center">
+                            <Coffee size={16} strokeWidth={1.8} className="text-[var(--matte-black)]" />
+                            <Slash
+                              size={18}
+                              strokeWidth={1.8}
+                              className="absolute text-[var(--matte-black)]"
+                            />
+                          </div>
+                        );
+                      }
+
                       if (!icon) {
                         return <ShoppingBag size={16} className="text-[var(--matte-black)]" />;
                       }
@@ -679,12 +702,12 @@ export function MenuPage({
                         <img
                           src={resolved}
                           alt={language === 'en' ? category.nameEn : category.nameAr}
-                          className="w-6 h-6 object-contain"
+                          className="w-5 h-5 object-contain"
                         />
                       );
                     })()}
                   </div>
-                  <span className="text-[9px] text-[var(--matte-black)] text-center leading-tight max-w-[64px]">
+                  <span className="text-[8px] text-[var(--matte-black)] text-center leading-tight max-w-[60px]">
                     {language === 'en' ? category.nameEn : category.nameAr}
                   </span>
                   {isAdmin && (
@@ -718,13 +741,42 @@ export function MenuPage({
                   onClick={() => setShowNewCategory(true)}
                   className="flex flex-col items-center gap-2 flex-shrink-0"
                 >
-                  <div className="w-10 h-10 rounded-full border-2 border-dashed border-[var(--matte-black)] flex items-center justify-center hover:border-[var(--espresso-brown)] transition-colors">
-                    <Plus size={16} />
+                  <div className="w-9 h-9 rounded-full border-2 border-dashed border-[var(--matte-black)] flex items-center justify-center hover:border-[var(--espresso-brown)] transition-colors">
+                    <Plus size={14} />
                   </div>
                   <span className="text-xs">Add</span>
                 </button>
               )}
             </div>
+
+            <button
+              onClick={() => onOpenCart()}
+              aria-label="Open cart"
+              className={`relative flex-shrink-0 w-10 h-10 rounded-full border transition-all ${
+                cartItemCount > 0
+                  ? 'border-[var(--espresso-brown)] bg-[var(--espresso-brown)] text-[var(--crisp-white)] shadow-[0_6px_14px_rgba(88,62,45,0.25)]'
+                  : 'border-[var(--matte-black)]/40 bg-[var(--crisp-white)] text-[var(--matte-black)] shadow-[0_4px_10px_rgba(0,0,0,0.08)] hover:border-[var(--espresso-brown)]'
+              }`}
+            >
+              <div className="w-full h-full flex items-center justify-center">
+                <ShoppingCart
+                  size={18}
+                  className={
+                    cartItemCount > 0 ? 'text-[var(--crisp-white)]' : 'text-[var(--matte-black)]'
+                  }
+                />
+              </div>
+              {cartItemCount > 0 && (
+                <span
+                  className={
+                    `absolute -top-1 bg-[var(--crisp-white)] text-[var(--espresso-brown)] text-[10px] min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border border-[var(--espresso-brown)] ` +
+                    (isRTL ? '-left-1' : '-right-1')
+                  }
+                >
+                  {cartItemCount}
+                </span>
+              )}
+            </button>
           </div>
 
           {/* Edit Category Modal */}
@@ -838,24 +890,6 @@ export function MenuPage({
 
       {/* Spacer so content doesn't sit under fixed header */}
       <div style={{ height: headerHeight }} />
-
-      {/* Floating Cart Button */}
-      <button
-        onClick={() => onOpenCart()}
-        aria-label="Open cart"
-        className={`fixed bottom-5 right-5 z-50 flex items-center justify-center w-12 h-12 rounded-full transition-all backdrop-blur border ${
-          cartItemCount > 0
-            ? 'bg-[var(--espresso-brown)] text-[var(--crisp-white)] border-[var(--espresso-brown)] shadow-[0_10px_22px_rgba(88,62,45,0.35)]'
-            : 'bg-[var(--crisp-white)]/80 text-[var(--matte-black)] border-[var(--matte-black)]/30 shadow-[0_6px_16px_rgba(0,0,0,0.08)] hover:border-[var(--espresso-brown)] hover:text-[var(--espresso-brown)]'
-        }`}
-      >
-        <ShoppingBag size={18} />
-        {cartItemCount > 0 && (
-          <span className="absolute -top-1 -right-1 bg-[var(--crisp-white)] text-[var(--espresso-brown)] text-[10px] min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border border-[var(--espresso-brown)] shadow-[0_2px_6px_rgba(0,0,0,0.12)]">
-            {cartItemCount}
-          </span>
-        )}
-      </button>
 
       {/* Menu Items by Category */}
       <div className="p-3">
