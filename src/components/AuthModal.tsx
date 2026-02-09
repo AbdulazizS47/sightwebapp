@@ -227,10 +227,20 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
             <input
               type="text"
               value={otp}
-              onChange={(e) => setOtp(e.target.value)}
+              onChange={(e) => {
+                const digits = e.target.value.replace(/\D/g, '').slice(0, 6);
+                setOtp(digits);
+              }}
               placeholder={text.otpPlaceholder}
               maxLength={6}
               dir="ltr"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              name="one-time-code"
+              pattern="[0-9]*"
+              autoCorrect="off"
+              autoCapitalize="off"
+              enterKeyHint="done"
               className="w-full p-4 border-2 border-[var(--matte-black)] bg-[var(--crisp-white)] text-[var(--matte-black)] mb-4 focus:outline-none focus:border-[var(--espresso-brown)]"
               disabled={loading}
             />
