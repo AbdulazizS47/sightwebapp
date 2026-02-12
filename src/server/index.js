@@ -186,6 +186,7 @@ app.get('/uploads/:filename', async (c) => {
 app.get('/api/health', (c) =>
   c.json({ status: 'healthy', timestamp: Date.now(), version: 'mysql-1.0.0' })
 );
+app.get('/', (c) => c.text('OK'));
 
 // Demo Auth Endpoints
 app.post('/api/auth/send-otp', async (c) => {
@@ -1527,6 +1528,37 @@ app.delete('/api/admin/menu/item/:id/image', async (c) => {
 });
 
 const PORT = Number(process.env.PORT || 4000);
-serve({ fetch: app.fetch, port: PORT }, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+const HOST = (process.env.HOST || '0.0.0.0').trim();
+
+const server = serve({ fetch: app.fetch, port: PORT, hostname: HOST }, () => {
+  console.log(`Server running at http://${HOST}:${PORT}`);
 });
+
+const shutdown = (signal) => {
+  console.log(`${signal} received, shutting down...`);
+  let exited = false;
+
+  const finish = async () => {
+    if (exited) return;
+    exited = true;
+    try {
+      await pool.end();
+    } catch (e) {
+      console.error('Error closing DB pool', e);
+    }
+    process.exit(0);
+  };
+
+  if (server?.close) {
+    server.close(() => {
+      void finish();
+    });
+  } else {
+    void finish();
+  }
+
+  setTimeout(() => process.exit(1), 10000);
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
