@@ -47,10 +47,14 @@ const OTP_RESEND_MIN_MS = Math.max(
 const OTP_MAX_PER_HOUR = Math.max(Number(process.env.OTP_MAX_PER_HOUR || 5) || 5, 1);
 const OTP_MAX_ATTEMPTS = Math.max(Number(process.env.OTP_MAX_ATTEMPTS || 5) || 5, 1);
 const OTP_PEPPER = (process.env.OTP_PEPPER || 'dev-pepper-change-me').trim();
+const SMS_PROVIDER = (process.env.SMS_PROVIDER || 'console').trim().toLowerCase();
 const PRINT_JOB_STALE_MS = Math.max(
   Number(process.env.PRINT_JOB_STALE_MS || 2 * 60 * 1000) || 2 * 60 * 1000,
   30 * 1000
 );
+const HEALTHCHECK_DB = (process.env.HEALTHCHECK_DB || 'true').trim().toLowerCase() !== 'false';
+const HEALTHCHECK_STRICT =
+  (process.env.HEALTHCHECK_STRICT || '').trim().toLowerCase() === 'true';
 const SESSION_TTL_MS = Math.max(
   Number(process.env.SESSION_TTL_MS || 30 * 24 * 60 * 60 * 1000) || 30 * 24 * 60 * 60 * 1000,
   60 * 60 * 1000
@@ -61,6 +65,16 @@ const CORS_ORIGINS = (process.env.CORS_ORIGINS || '')
   .filter(Boolean);
 // In-memory cache of sessions (persistent store is MySQL)
 const sessions = new Map();
+
+const logStartupWarning = (message) => {
+  console.warn(`[startup] ${message}`);
+};
+if (!PRINT_DEVICE_KEY) {
+  logStartupWarning('PRINT_DEVICE_KEY is not set; print bridge will not be able to claim jobs.');
+}
+if (SMS_PROVIDER === 'console' && !OTP_DEV_MODE) {
+  logStartupWarning('SMS_PROVIDER is "console"; OTPs will be logged to stdout.');
+}
 
 async function getSessionUser(token) {
   if (!token) return null;
@@ -187,9 +201,36 @@ app.get('/uploads/:filename', async (c) => {
 });
 
 // Health
-app.get('/api/health', (c) =>
-  c.json({ status: 'healthy', timestamp: Date.now(), version: 'mysql-1.0.0' })
-);
+app.get('/api/health', async (c) => {
+  const timestamp = Date.now();
+  let dbStatus = 'unknown';
+  let dbLatencyMs = null;
+  if (HEALTHCHECK_DB) {
+    const start = Date.now();
+    try {
+      await pool.query('SELECT 1');
+      dbStatus = 'ok';
+      dbLatencyMs = Date.now() - start;
+    } catch (e) {
+      dbStatus = 'error';
+      dbLatencyMs = Date.now() - start;
+      console.error('Healthcheck DB query failed', e);
+    }
+  }
+
+  const payload = {
+    status: dbStatus === 'error' ? 'degraded' : 'healthy',
+    timestamp,
+    version: 'mysql-1.0.0',
+    db: dbStatus,
+    ...(dbLatencyMs != null ? { dbLatencyMs } : {}),
+  };
+
+  if (dbStatus === 'error' && HEALTHCHECK_STRICT) {
+    return c.json(payload, 503);
+  }
+  return c.json(payload);
+});
 app.get('/', (c) => c.text('OK'));
 
 // Demo Auth Endpoints
@@ -1544,8 +1585,11 @@ const server = serve({ fetch: app.fetch, port: PORT, hostname: HOST }, () => {
   console.log(`Server running at http://${HOST}:${PORT}`);
 });
 
-const shutdown = (signal) => {
+const shutdown = (signal, exitCode = 0, error) => {
   console.log(`${signal} received, shutting down...`);
+  if (error) {
+    console.error(error);
+  }
   let exited = false;
 
   const finish = async () => {
@@ -1556,7 +1600,7 @@ const shutdown = (signal) => {
     } catch (e) {
       console.error('Error closing DB pool', e);
     }
-    process.exit(0);
+    process.exit(exitCode);
   };
 
   if (server?.close) {
@@ -1567,8 +1611,10 @@ const shutdown = (signal) => {
     void finish();
   }
 
-  setTimeout(() => process.exit(1), 10000);
+  setTimeout(() => process.exit(exitCode || 1), 10000);
 };
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('unhandledRejection', (reason) => shutdown('unhandledRejection', 1, reason));
+process.on('uncaughtException', (error) => shutdown('uncaughtException', 1, error));

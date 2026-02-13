@@ -38,6 +38,16 @@ const MYSQL_DATABASE =
   env.MYSQL_DATABASE ||
   env.MYSQLDATABASE ||
   (urlConfig ? urlConfig.database : 'sight_app');
+const MYSQL_SSL =
+  (env.MYSQL_SSL || '').trim().toLowerCase() === 'true' ||
+  (env.MYSQL_SSL || '').trim() === '1';
+const MYSQL_SSL_REJECT_UNAUTHORIZED =
+  (env.MYSQL_SSL_REJECT_UNAUTHORIZED || '').trim().toLowerCase() === 'true';
+const MYSQL_CONNECT_TIMEOUT = Math.max(Number(env.MYSQL_CONNECT_TIMEOUT || 10000) || 10000, 1000);
+const MYSQL_SKIP_CREATE_DB =
+  (env.MYSQL_SKIP_CREATE_DB || '').trim().toLowerCase() === 'true';
+
+const sslConfig = MYSQL_SSL ? { rejectUnauthorized: MYSQL_SSL_REJECT_UNAUTHORIZED } : undefined;
 
 export const pool = mysql.createPool({
   host: MYSQL_HOST,
@@ -45,24 +55,39 @@ export const pool = mysql.createPool({
   user: MYSQL_USER,
   password: MYSQL_PASSWORD,
   database: MYSQL_DATABASE,
+  connectTimeout: MYSQL_CONNECT_TIMEOUT,
+  ssl: sslConfig,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
 });
 
 export async function ensureDatabase() {
+  if (MYSQL_SKIP_CREATE_DB) return;
   // Use a connection without selecting a database to ensure it exists
-  const conn = await mysql.createConnection({
-    host: MYSQL_HOST,
-    port: Number(MYSQL_PORT),
-    user: MYSQL_USER,
-    password: MYSQL_PASSWORD,
-    multipleStatements: true,
-  });
-  await conn.query(
-    `CREATE DATABASE IF NOT EXISTS \`${MYSQL_DATABASE}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`
-  );
-  await conn.end();
+  let conn;
+  try {
+    conn = await mysql.createConnection({
+      host: MYSQL_HOST,
+      port: Number(MYSQL_PORT),
+      user: MYSQL_USER,
+      password: MYSQL_PASSWORD,
+      multipleStatements: true,
+      connectTimeout: MYSQL_CONNECT_TIMEOUT,
+      ssl: sslConfig,
+    });
+    await conn.query(
+      `CREATE DATABASE IF NOT EXISTS \`${MYSQL_DATABASE}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`
+    );
+  } catch (e) {
+    console.error('Failed to ensure database exists', e);
+  } finally {
+    try {
+      if (conn) await conn.end();
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export async function initSchema() {
