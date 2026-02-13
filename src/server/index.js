@@ -47,6 +47,10 @@ const OTP_RESEND_MIN_MS = Math.max(
 const OTP_MAX_PER_HOUR = Math.max(Number(process.env.OTP_MAX_PER_HOUR || 5) || 5, 1);
 const OTP_MAX_ATTEMPTS = Math.max(Number(process.env.OTP_MAX_ATTEMPTS || 5) || 5, 1);
 const OTP_PEPPER = (process.env.OTP_PEPPER || 'dev-pepper-change-me').trim();
+const PRINT_JOB_STALE_MS = Math.max(
+  Number(process.env.PRINT_JOB_STALE_MS || 2 * 60 * 1000) || 2 * 60 * 1000,
+  30 * 1000
+);
 const SESSION_TTL_MS = Math.max(
   Number(process.env.SESSION_TTL_MS || 30 * 24 * 60 * 60 * 1000) || 30 * 24 * 60 * 60 * 1000,
   60 * 60 * 1000
@@ -1028,9 +1032,15 @@ app.post('/api/print/jobs/claim', async (c) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
+    const staleBefore = Date.now() - PRINT_JOB_STALE_MS;
     const [rows] = await conn.execute(
-      'SELECT * FROM print_jobs WHERE status = ? ORDER BY createdAt ASC LIMIT 1 FOR UPDATE',
-      ['pending']
+      `SELECT * FROM print_jobs
+       WHERE status = ?
+          OR (status = ? AND claimedAt IS NOT NULL AND claimedAt < ?)
+       ORDER BY createdAt ASC
+       LIMIT 1
+       FOR UPDATE`,
+      ['pending', 'printing', staleBefore]
     );
     const job = Array.isArray(rows) && rows[0] ? rows[0] : null;
     if (!job) {
