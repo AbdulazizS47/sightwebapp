@@ -679,18 +679,24 @@ export function MenuPage({
                       if (isNoFrame) {
                         return (
                           <div className="relative w-5 h-5 flex items-center justify-center">
-                            <Coffee size={16} strokeWidth={1.8} className="text-[var(--matte-black)]" />
+                            <Coffee
+                              size={16}
+                              strokeWidth={1.8}
+                              className="text-[var(--matte-black)] scale-[1.2]"
+                            />
                             <Slash
                               size={18}
                               strokeWidth={1.8}
-                              className="absolute text-[var(--matte-black)]"
+                              className="absolute text-[var(--matte-black)] scale-[1.2]"
                             />
                           </div>
                         );
                       }
 
                       if (!icon) {
-                        return <ShoppingBag size={16} className="text-[var(--matte-black)]" />;
+                        return (
+                          <ShoppingBag size={16} className="text-[var(--matte-black)] scale-[1.2]" />
+                        );
                       }
 
                       const resolved =
@@ -702,7 +708,7 @@ export function MenuPage({
                         <img
                           src={resolved}
                           alt={language === 'en' ? category.nameEn : category.nameAr}
-                          className="w-5 h-5 object-contain"
+                          className="w-5 h-5 object-contain scale-[1.2]"
                         />
                       );
                     })()}

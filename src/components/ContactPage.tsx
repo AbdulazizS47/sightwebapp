@@ -1,4 +1,4 @@
-import { ArrowLeft, Phone, Mail, MapPin } from 'lucide-react';
+import { ArrowLeft, Instagram, Mail, MapPin } from 'lucide-react';
 
 interface ContactPageProps {
   onBack: () => void;
@@ -10,24 +10,28 @@ export function ContactPage({ onBack, language }: ContactPageProps) {
     en: {
       title: 'Contact Us',
       subtitle: 'Get in touch with our team',
-      phone: 'Phone',
+      instagram: 'Instagram',
       email: 'Email',
       location: 'Location',
-      phoneNumber: '+966 54 744 4145',
+      instagramHandle: 'sightcafee',
+      instagramUrl: 'https://www.instagram.com/sightcafee/',
       emailAddress: 'outofsight.co@outlook.com',
       address: 'Al Hofuf, Saudi Arabia',
+      locationUrl: 'https://maps.app.goo.gl/XNoBCTw3PpgcMCrRA?g_st=ic',
       hours: 'Hours',
       hoursText: 'Daily: 4:00 PM - 2:00 AM',
     },
     ar: {
       title: 'اتصل بنا',
       subtitle: 'تواصل مع فريقنا',
-      phone: 'الهاتف',
+      instagram: 'انستغرام',
       email: 'البريد الإلكتروني',
       location: 'الموقع',
-      phoneNumber: '+966 54 744 4145',
+      instagramHandle: 'sightcafee',
+      instagramUrl: 'https://www.instagram.com/sightcafee/',
       emailAddress: 'outofsight.co@outlook.com',
       address: 'الحسا حساك لو الدهر .. ؟',
+      locationUrl: 'https://maps.app.goo.gl/XNoBCTw3PpgcMCrRA?g_st=ic',
       hours: 'ساعات العمل',
       hoursText: 'يوميًا: ٤:٠٠ مساءً - ٢:٠٠ صباحًا',
     },
@@ -56,18 +60,23 @@ export function ContactPage({ onBack, language }: ContactPageProps) {
         <p className="text-[var(--matte-black)] opacity-70 mb-12 text-center">{text.subtitle}</p>
 
         <div className="space-y-6">
-          {/* Phone */}
-          <div className="p-6 bg-[var(--cool-gray)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] transition-colors group">
+          {/* Instagram */}
+          <a
+            className="block p-6 bg-[var(--cool-gray)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] transition-colors group"
+            href={text.instagramUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
             <div className="flex items-start gap-4">
-              <Phone size={24} className="flex-shrink-0 mt-1" />
+              <Instagram size={24} className="flex-shrink-0 mt-1" />
               <div>
-                <h3 className="mb-2">{text.phone}</h3>
+                <h3 className="mb-2">{text.instagram}</h3>
                 <p className="opacity-70" dir="ltr">
-                  {text.phoneNumber}
+                  {text.instagramHandle}
                 </p>
               </div>
             </div>
-          </div>
+          </a>
 
           {/* Email */}
           <div className="p-6 bg-[var(--cool-gray)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] transition-colors group">
@@ -83,7 +92,12 @@ export function ContactPage({ onBack, language }: ContactPageProps) {
           </div>
 
           {/* Location */}
-          <div className="p-6 bg-[var(--cool-gray)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] transition-colors group">
+          <a
+            className="block p-6 bg-[var(--cool-gray)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] transition-colors group"
+            href={text.locationUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
             <div className="flex items-start gap-4">
               <MapPin size={24} className="flex-shrink-0 mt-1" />
               <div>
@@ -91,7 +105,7 @@ export function ContactPage({ onBack, language }: ContactPageProps) {
                 <p className="opacity-70">{text.address}</p>
               </div>
             </div>
-          </div>
+          </a>
 
           {/* Hours */}
           <div className="p-6 border-2 border-[var(--matte-black)] mt-8">
