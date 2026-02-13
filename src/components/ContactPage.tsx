@@ -14,10 +14,10 @@ export function ContactPage({ onBack, language }: ContactPageProps) {
       email: 'Email',
       location: 'Location',
       phoneNumber: '+966 54 744 4145',
-      emailAddress: 'outfight.co@outlook.com',
+      emailAddress: 'outofsight.co@outlook.com',
       address: 'Al Hofuf, Saudi Arabia',
       hours: 'Hours',
-      hoursText: 'Daily: 7:00 AM - 11:00 PM',
+      hoursText: 'Daily: 4:00 PM - 2:00 AM',
     },
     ar: {
       title: 'اتصل بنا',
@@ -26,10 +26,10 @@ export function ContactPage({ onBack, language }: ContactPageProps) {
       email: 'البريد الإلكتروني',
       location: 'الموقع',
       phoneNumber: '+966 54 744 4145',
-      emailAddress: 'outfight.co@outlook.com',
+      emailAddress: 'outofsight.co@outlook.com',
       address: 'الحسا حساك لو الدهر .. ؟',
       hours: 'ساعات العمل',
-      hoursText: 'يوميًا: ٧:٠٠ صباحًا - ١١:٠٠ مساءً',
+      hoursText: 'يوميًا: ٤:٠٠ مساءً - ٢:٠٠ صباحًا',
     },
   };
 
