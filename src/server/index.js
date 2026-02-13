@@ -10,6 +10,7 @@ import { pool, initSchema, getTodayNextDisplayNumber, ensureDatabase } from './d
 import { sendOtpSms } from './sms.js';
 
 const app = new Hono();
+const printApi = new Hono();
 
 app.use(
   '*',
@@ -51,6 +52,11 @@ const SMS_PROVIDER = (process.env.SMS_PROVIDER || 'console').trim().toLowerCase(
 const PRINT_JOB_STALE_MS = Math.max(
   Number(process.env.PRINT_JOB_STALE_MS || 2 * 60 * 1000) || 2 * 60 * 1000,
   30 * 1000
+);
+const PRINT_JOB_BACKFILL_MS = Math.max(
+  Number(process.env.PRINT_JOB_BACKFILL_MS || 24 * 60 * 60 * 1000) ||
+    24 * 60 * 60 * 1000,
+  0
 );
 const HEALTHCHECK_DB = (process.env.HEALTHCHECK_DB || 'true').trim().toLowerCase() !== 'false';
 const HEALTHCHECK_STRICT =
@@ -1060,13 +1066,13 @@ app.post('/api/orders/create', async (c) => {
 });
 
 // Print jobs: claim next pending job (for print bridge)
-app.get('/api/print/ping', async (c) => {
+printApi.get('/ping', async (c) => {
   const unauthorized = requirePrintDevice(c);
   if (unauthorized) return unauthorized;
   return c.json({ success: true });
 });
 
-app.post('/api/print/jobs/claim', async (c) => {
+printApi.post('/jobs/claim', async (c) => {
   const unauthorized = requirePrintDevice(c);
   if (unauthorized) return unauthorized;
 
@@ -1083,7 +1089,35 @@ app.post('/api/print/jobs/claim', async (c) => {
        FOR UPDATE`,
       ['pending', 'printing', staleBefore]
     );
-    const job = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    let job = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    if (!job && PRINT_JOB_BACKFILL_MS > 0) {
+      const backfillAfter = Date.now() - PRINT_JOB_BACKFILL_MS;
+      const [missingRows] = await conn.execute(
+        `SELECT o.id AS orderId, o.createdAt
+         FROM orders o
+         LEFT JOIN print_jobs pj ON pj.orderId = o.id
+         WHERE pj.id IS NULL AND o.createdAt >= ?
+         ORDER BY o.createdAt ASC
+         LIMIT 1
+         FOR UPDATE`,
+        [backfillAfter]
+      );
+      const missing = Array.isArray(missingRows) && missingRows[0] ? missingRows[0] : null;
+      if (missing?.orderId) {
+        const createdAt = Number(missing.createdAt || Date.now());
+        const [insertRes] = await conn.execute(
+          'INSERT INTO print_jobs (orderId, status, attempts, createdAt) VALUES (?, ?, ?, ?)',
+          [missing.orderId, 'pending', 0, createdAt]
+        );
+        job = {
+          id: Number(insertRes.insertId),
+          orderId: String(missing.orderId),
+          status: 'pending',
+          attempts: 0,
+          createdAt,
+        };
+      }
+    }
     if (!job) {
       await conn.commit();
       return c.json({ success: true, job: null });
@@ -1134,7 +1168,7 @@ app.post('/api/print/jobs/claim', async (c) => {
 });
 
 // Print jobs: acknowledge success
-app.post('/api/print/jobs/:id/ack', async (c) => {
+printApi.post('/jobs/:id/ack', async (c) => {
   const unauthorized = requirePrintDevice(c);
   if (unauthorized) return unauthorized;
   const id = Number(c.req.param('id')) || 0;
@@ -1153,7 +1187,7 @@ app.post('/api/print/jobs/:id/ack', async (c) => {
 });
 
 // Print jobs: mark failure
-app.post('/api/print/jobs/:id/fail', async (c) => {
+printApi.post('/jobs/:id/fail', async (c) => {
   const unauthorized = requirePrintDevice(c);
   if (unauthorized) return unauthorized;
   const id = Number(c.req.param('id')) || 0;
@@ -1172,6 +1206,9 @@ app.post('/api/print/jobs/:id/fail', async (c) => {
     return c.json({ error: 'Failed to update print job' }, 500);
   }
 });
+
+app.route('/api/print', printApi);
+app.route('/api/api/print', printApi);
 
 // Customer Orders: fetch a single order for tracking
 app.get('/api/orders/:id', async (c) => {
