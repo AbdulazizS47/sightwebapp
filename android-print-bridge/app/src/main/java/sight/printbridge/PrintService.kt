@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,6 +21,7 @@ import java.net.UnknownHostException
 import javax.net.ssl.SSLHandshakeException
 
 class PrintService : Service() {
+  private val logTag = "PrintBridge"
   private val scope = CoroutineScope(Dispatchers.IO)
   private var job: Job? = null
   private val printer = PrinterManager()
@@ -71,6 +73,7 @@ class PrintService : Service() {
         client.ping()
         client.pingDeviceKey()
       } catch (e: Exception) {
+        logError("Server check failed", e)
         updateNotification(errorMessage(e))
         stopSelf()
         return@launch
@@ -98,14 +101,26 @@ class PrintService : Service() {
                 printer.write(EscPos.bitmap24(bitmap))
                 printer.write(EscPos.feed(3))
               }
-              client.ack(job.id)
+              try {
+                client.ack(job.id)
+              } catch (e: Exception) {
+                logError("Ack failed for job ${job.id}", e)
+                updateNotification("Printed (ack failed)")
+                delay(1000)
+              }
               updateNotification("Printed ${job.order.orderNumber}")
             } catch (e: Exception) {
-              client.fail(job.id, e.message ?: "Print failed")
-              updateNotification("Print failed")
+              logError("Print failed for job ${job.id}", e)
+              try {
+                client.fail(job.id, e.message ?: "Print failed")
+              } catch (failError: Exception) {
+                logError("Fail report failed for job ${job.id}", failError)
+              }
+              updateNotification("Print failed: ${shortMessage(e)}")
             }
           }
         } catch (e: Exception) {
+          logError("Polling error", e)
           updateNotification(errorMessage(e))
         }
 
@@ -151,11 +166,32 @@ class PrintService : Service() {
   }
 
   private fun errorMessage(e: Exception): String {
-    return when (e) {
+    val base = when (e) {
       is UnknownHostException -> "DNS error: can't resolve host"
       is SSLHandshakeException -> "TLS error: check HTTPS"
-      else -> "Error: ${e.message}"
+      is ApiException -> {
+        val code = e.code?.toString() ?: "HTTP error"
+        val body = e.body?.let { truncate(it, 120) }
+        val url = e.url?.let { " @ ${truncate(it, 80)}" } ?: ""
+        if (body.isNullOrBlank()) "$code$url" else "$code$url: $body"
+      }
+      else -> e.message ?: "Unknown error"
     }
+    return "Error: ${truncate(base, 160)}"
+  }
+
+  private fun shortMessage(e: Exception): String {
+    val msg = e.message ?: e.javaClass.simpleName
+    return truncate(msg, 80)
+  }
+
+  private fun logError(context: String, e: Exception) {
+    Log.e(logTag, "$context: ${e.message}", e)
+  }
+
+  private fun truncate(value: String, max: Int): String {
+    if (value.length <= max) return value
+    return value.take(max) + "..."
   }
 
   private fun bitmapHasInk(bitmap: android.graphics.Bitmap): Boolean {

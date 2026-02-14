@@ -4,11 +4,17 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONException
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 class PrintClient(private val serverUrl: String, private val deviceKey: String) {
-  private val client = OkHttpClient()
+  private val client = OkHttpClient.Builder()
+    .connectTimeout(10, TimeUnit.SECONDS)
+    .readTimeout(20, TimeUnit.SECONDS)
+    .writeTimeout(20, TimeUnit.SECONDS)
+    .build()
   private val jsonMedia = "application/json".toMediaType()
 
   fun ping() {
@@ -16,13 +22,7 @@ class PrintClient(private val serverUrl: String, private val deviceKey: String) 
       .url("${serverUrl.trimEnd('/')}/api/health")
       .get()
       .build()
-    client.newCall(request).execute().use { resp ->
-      val body = resp.body?.string() ?: ""
-      if (!resp.isSuccessful) {
-        val msg = if (body.isNotBlank()) body else "HTTP ${resp.code}"
-        throw IllegalStateException("Health check failed: $msg")
-      }
-    }
+    execute(request)
   }
 
   fun pingDeviceKey() {
@@ -31,17 +31,24 @@ class PrintClient(private val serverUrl: String, private val deviceKey: String) 
       .addHeader("X-Device-Key", deviceKey)
       .get()
       .build()
-    client.newCall(request).execute().use { resp ->
-      val body = resp.body?.string() ?: ""
-      if (!resp.isSuccessful) {
-        val msg = if (body.isNotBlank()) body else "HTTP ${resp.code}"
-        throw IllegalStateException("Device key check failed: $msg")
-      }
+    val body = execute(request)
+    try {
       val json = JSONObject(body)
       if (!json.optBoolean("success", false)) {
         val err = json.optString("error", "Unauthorized")
-        throw IllegalStateException("Device key check failed: $err")
+        throw ApiException(
+          message = "Device key check failed: $err",
+          url = request.url.toString(),
+          body = body,
+        )
       }
+    } catch (e: JSONException) {
+      throw ApiException(
+        message = "Device key check failed: invalid JSON",
+        url = request.url.toString(),
+        body = body,
+        cause = e,
+      )
     }
   }
 
@@ -52,16 +59,16 @@ class PrintClient(private val serverUrl: String, private val deviceKey: String) 
       .post("{}".toRequestBody(jsonMedia))
       .build()
 
-    client.newCall(request).execute().use { resp ->
-      val body = resp.body?.string() ?: ""
-      if (!resp.isSuccessful) {
-        val msg = if (body.isNotBlank()) body else "HTTP ${resp.code}"
-        throw IllegalStateException("Claim failed: $msg")
-      }
+    val body = execute(request)
+    try {
       val json = JSONObject(body)
       if (!json.optBoolean("success", false)) {
         val err = json.optString("error", "Unknown error")
-        throw IllegalStateException("Claim failed: $err")
+        throw ApiException(
+          message = "Claim failed: $err",
+          url = request.url.toString(),
+          body = body,
+        )
       }
       val jobObj = json.optJSONObject("job") ?: return null
       if (jobObj == JSONObject.NULL) return null
@@ -88,6 +95,13 @@ class PrintClient(private val serverUrl: String, private val deviceKey: String) 
         orderId = jobObj.getString("orderId"),
         order = order,
       )
+    } catch (e: JSONException) {
+      throw ApiException(
+        message = "Claim failed: invalid JSON",
+        url = request.url.toString(),
+        body = body,
+        cause = e,
+      )
     }
   }
 
@@ -97,7 +111,7 @@ class PrintClient(private val serverUrl: String, private val deviceKey: String) 
       .addHeader("X-Device-Key", deviceKey)
       .post("{}".toRequestBody(jsonMedia))
       .build()
-    client.newCall(req).execute().close()
+    execute(req)
   }
 
   fun fail(jobId: Long, error: String) {
@@ -107,7 +121,23 @@ class PrintClient(private val serverUrl: String, private val deviceKey: String) 
       .addHeader("X-Device-Key", deviceKey)
       .post(body.toRequestBody(jsonMedia))
       .build()
-    client.newCall(req).execute().close()
+    execute(req)
+  }
+
+  private fun execute(request: Request): String {
+    client.newCall(request).execute().use { resp ->
+      val body = resp.body?.string() ?: ""
+      if (!resp.isSuccessful) {
+        val msg = "HTTP ${resp.code} ${resp.message}".trim()
+        throw ApiException(
+          message = msg,
+          code = resp.code,
+          url = request.url.toString(),
+          body = body,
+        )
+      }
+      return body
+    }
   }
 }
 
@@ -125,3 +155,11 @@ private fun JSONArray.toOrderItems(): List<OrderItem> {
   }
   return items
 }
+
+class ApiException(
+  message: String,
+  val code: Int? = null,
+  val url: String? = null,
+  val body: String? = null,
+  cause: Throwable? = null,
+) : Exception(message, cause)
