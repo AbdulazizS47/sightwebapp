@@ -3,10 +3,12 @@ import logoImage from 'figma:asset/6a698afc3834913c1c2ac422fa5bd04b815dc28c.png'
 
 interface LandingPageProps {
   onNavigate: (...args: ['menu' | 'contact']) => void;
+  onAdminNavigate?: (mode: 'edit' | 'order') => void;
+  isAdmin?: boolean;
   language: 'en' | 'ar';
 }
 
-export function LandingPage({ onNavigate, language }: LandingPageProps) {
+export function LandingPage({ onNavigate, onAdminNavigate, isAdmin, language }: LandingPageProps) {
   const content = {
     en: {
       header: 'SIGHT',
@@ -20,6 +22,8 @@ export function LandingPage({ onNavigate, language }: LandingPageProps) {
       viewMenu: 'MENU',
       pickUp: 'Pick Up Order',
       contact: 'Contact Us',
+      adminEdit: 'Edit Items',
+      adminOrder: 'Register Orders',
     },
     ar: {
       header: 'سايت',
@@ -33,6 +37,8 @@ export function LandingPage({ onNavigate, language }: LandingPageProps) {
       viewMenu: 'القائمة',
       pickUp: 'طلب استلام',
       contact: 'اتصل بنا',
+      adminEdit: 'تعديل الأصناف',
+      adminOrder: 'تسجيل الطلبات',
     },
   };
 
@@ -75,19 +81,38 @@ export function LandingPage({ onNavigate, language }: LandingPageProps) {
           transition={{ duration: 0.8, delay: 0.4, ease: 'easeOut' }}
           className="flex flex-col gap-3 w-full max-w-sm"
         >
-          <button
-            onClick={() => onNavigate('menu')}
-            className="w-full py-4 px-8 bg-[var(--matte-black)] text-[var(--crisp-white)] hover:bg-[var(--espresso-brown)] transition-colors duration-300 border-2 border-[var(--matte-black)] hover:border-[var(--espresso-brown)] text-center"
-          >
-            {text.viewMenu}
-          </button>
+          {isAdmin && onAdminNavigate ? (
+            <>
+              <button
+                onClick={() => onAdminNavigate('edit')}
+                className="w-full py-4 px-8 bg-[var(--matte-black)] text-[var(--crisp-white)] hover:bg-[var(--espresso-brown)] transition-colors duration-300 border-2 border-[var(--matte-black)] hover:border-[var(--espresso-brown)] text-center"
+              >
+                {text.adminEdit}
+              </button>
+              <button
+                onClick={() => onAdminNavigate('order')}
+                className="w-full py-4 px-8 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors duration-300 border-2 border-[var(--espresso-brown)] hover:border-[var(--matte-black)] text-center"
+              >
+                {text.adminOrder}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => onNavigate('menu')}
+                className="w-full py-4 px-8 bg-[var(--matte-black)] text-[var(--crisp-white)] hover:bg-[var(--espresso-brown)] transition-colors duration-300 border-2 border-[var(--matte-black)] hover:border-[var(--espresso-brown)] text-center"
+              >
+                {text.viewMenu}
+              </button>
 
-          <button
-            onClick={() => onNavigate('menu')}
-            className="w-full py-4 px-8 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors duration-300 border-2 border-[var(--espresso-brown)] hover:border-[var(--matte-black)] text-center"
-          >
-            {text.pickUp}
-          </button>
+              <button
+                onClick={() => onNavigate('menu')}
+                className="w-full py-4 px-8 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors duration-300 border-2 border-[var(--espresso-brown)] hover:border-[var(--matte-black)] text-center"
+              >
+                {text.pickUp}
+              </button>
+            </>
+          )}
 
           <button
             onClick={() => onNavigate('contact')}

@@ -61,6 +61,7 @@ interface MenuPageProps {
   language: 'en' | 'ar';
   user: User | null;
   sessionToken: string | null;
+  adminMode?: 'edit' | 'order';
 }
 
 export function MenuPage({
@@ -71,6 +72,7 @@ export function MenuPage({
   language,
   user,
   sessionToken,
+  adminMode,
 }: MenuPageProps) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
@@ -127,6 +129,9 @@ export function MenuPage({
   // const isAdmin = user?.phoneNumber === '0547444145';
   // Use role-based gating instead of hardcoded phone
   const isAdmin = user?.role === 'admin';
+  const effectiveAdminMode = isAdmin ? adminMode || 'edit' : 'order';
+  const canEdit = isAdmin && effectiveAdminMode === 'edit';
+  const canOrder = !isAdmin || effectiveAdminMode === 'order';
 
   const content = {
     en: {
@@ -559,7 +564,7 @@ export function MenuPage({
   };
 
   const getItemsForCategory = (categoryId: string) => {
-    return menuItems.filter((item) => item.category === categoryId && (isAdmin || item.available));
+    return menuItems.filter((item) => item.category === categoryId && (canEdit || item.available));
   };
 
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -716,7 +721,7 @@ export function MenuPage({
                   <span className="text-[8px] text-[var(--matte-black)] text-center leading-tight max-w-[60px]">
                     {language === 'en' ? category.nameEn : category.nameAr}
                   </span>
-                  {isAdmin && (
+                  {canEdit && (
                     <div className="flex gap-1">
                       <button
                         onClick={(e) => {
@@ -742,7 +747,7 @@ export function MenuPage({
                 );
               })}
 
-              {isAdmin && (
+              {canEdit && (
                 <button
                   onClick={() => setShowNewCategory(true)}
                   className="flex flex-col items-center gap-2 flex-shrink-0"
@@ -755,38 +760,40 @@ export function MenuPage({
               )}
             </div>
 
-            <button
-              onClick={() => onOpenCart()}
-              aria-label="Open cart"
-              className={`relative flex-shrink-0 w-10 h-10 rounded-full border transition-all ${
-                cartItemCount > 0
-                  ? 'border-[var(--espresso-brown)] bg-[var(--espresso-brown)] text-[var(--crisp-white)] shadow-[0_6px_14px_rgba(88,62,45,0.25)]'
-                  : 'border-[var(--matte-black)]/40 bg-[var(--crisp-white)] text-[var(--matte-black)] shadow-[0_4px_10px_rgba(0,0,0,0.08)] hover:border-[var(--espresso-brown)]'
-              }`}
-            >
-              <div className="w-full h-full flex items-center justify-center">
-                <ShoppingCart
-                  size={18}
-                  className={
-                    cartItemCount > 0 ? 'text-[var(--crisp-white)]' : 'text-[var(--matte-black)]'
-                  }
-                />
-              </div>
-              {cartItemCount > 0 && (
-                <span
-                  className={
-                    `absolute -top-1 bg-[var(--crisp-white)] text-[var(--espresso-brown)] text-[10px] min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border border-[var(--espresso-brown)] ` +
-                    (isRTL ? '-left-1' : '-right-1')
-                  }
-                >
-                  {cartItemCount}
-                </span>
-              )}
-            </button>
+            {canOrder && (
+              <button
+                onClick={() => onOpenCart()}
+                aria-label="Open cart"
+                className={`relative flex-shrink-0 w-10 h-10 rounded-full border transition-all ${
+                  cartItemCount > 0
+                    ? 'border-[var(--espresso-brown)] bg-[var(--espresso-brown)] text-[var(--crisp-white)] shadow-[0_6px_14px_rgba(88,62,45,0.25)]'
+                    : 'border-[var(--matte-black)]/40 bg-[var(--crisp-white)] text-[var(--matte-black)] shadow-[0_4px_10px_rgba(0,0,0,0.08)] hover:border-[var(--espresso-brown)]'
+                }`}
+              >
+                <div className="w-full h-full flex items-center justify-center">
+                  <ShoppingCart
+                    size={18}
+                    className={
+                      cartItemCount > 0 ? 'text-[var(--crisp-white)]' : 'text-[var(--matte-black)]'
+                    }
+                  />
+                </div>
+                {cartItemCount > 0 && (
+                  <span
+                    className={
+                      `absolute -top-1 bg-[var(--crisp-white)] text-[var(--espresso-brown)] text-[10px] min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border border-[var(--espresso-brown)] ` +
+                      (isRTL ? '-left-1' : '-right-1')
+                    }
+                  >
+                    {cartItemCount}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
 
           {/* Edit Category Modal */}
-          {isAdmin && editingCategory && (
+          {canEdit && editingCategory && (
             <div className="absolute top-full left-0 right-0 bg-[var(--crisp-white)] border-b-2 border-[var(--espresso-brown)] p-4 shadow-lg z-30">
               <h3 className="text-sm mb-3">Edit Category</h3>
               <div className="flex gap-2 mb-2">
@@ -851,7 +858,7 @@ export function MenuPage({
           )}
 
           {/* Add New Category Form */}
-          {isAdmin && showNewCategory && (
+          {canEdit && showNewCategory && (
             <div className="absolute top-full left-0 right-0 bg-[var(--crisp-white)] border-b-2 border-[var(--espresso-brown)] p-4 shadow-lg z-30">
               <h3 className="text-sm mb-3">Add New Category</h3>
               <div className="flex gap-2 mb-2">
@@ -917,7 +924,7 @@ export function MenuPage({
                       editingItem === item.id
                         ? 'border-[var(--espresso-brown)]'
                         : 'border-transparent hover:border-[var(--espresso-brown)] hover:shadow-sm'
-                    } ${!item.available && isAdmin ? 'opacity-50' : ''}`}
+                    } ${!item.available && canEdit ? 'opacity-50' : ''}`}
                   >
                     {editingItem === item.id ? (
                       <div className="p-3 space-y-2.5">
@@ -1067,7 +1074,7 @@ export function MenuPage({
                           <div>
                             <h3 className="text-base mb-1">
                               {language === 'en' ? item.nameEn : item.nameAr}
-                              {isAdmin && !item.available && (
+                              {canEdit && !item.available && (
                                 <span className="ml-1.5 text-[10px] text-red-600">(Hidden)</span>
                               )}
                             </h3>
@@ -1079,7 +1086,7 @@ export function MenuPage({
                             <div className="text-sm">
                               {Number(item.price).toFixed(2)} {text.sar}
                             </div>
-                            {isAdmin ? (
+                            {canEdit ? (
                               <div className="flex gap-1">
                                 <button
                                   onClick={() => setEditingItem(item.id)}
@@ -1101,7 +1108,7 @@ export function MenuPage({
                                   <Trash2 size={10} />
                                 </button>
                               </div>
-                            ) : item.available ? (
+                            ) : canOrder && item.available ? (
                               <button
                                 onClick={() => addToCart(item)}
                                 className="px-5 py-1.5 border border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)] hover:border-[var(--espresso-brown)] transition-colors text-xs"
@@ -1131,7 +1138,7 @@ export function MenuPage({
                   </div>
                 ))}
 
-                {isAdmin && activeCategory === category.id && (
+                {canEdit && activeCategory === category.id && (
                   <>
                     {!showNewItem ? (
                       <button

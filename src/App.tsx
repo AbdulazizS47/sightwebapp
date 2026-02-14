@@ -51,6 +51,7 @@ export default function App() {
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
   const [pendingHash, setPendingHash] = useState<string | null>(null);
   const [returnToCartAfterAuth, setReturnToCartAfterAuth] = useState(false);
+  const [adminMenuMode, setAdminMenuMode] = useState<'edit' | 'order'>('order');
 
   // Set viewport meta tag for proper mobile rendering
   useEffect(() => {
@@ -188,6 +189,7 @@ export default function App() {
     localStorage.removeItem('sessionToken');
     setCartItems([]);
     setShowCart(false);
+    setAdminMenuMode('order');
     setCurrentPage('landing');
   };
 
@@ -256,8 +258,18 @@ export default function App() {
       window.location.hash = '/admin-login';
       return;
     }
+    if (page === 'menu') {
+      setAdminMenuMode('order');
+    }
     setCurrentPage(page);
     window.location.hash = `/${page}`;
+  };
+
+  const handleAdminMenu = (mode: 'edit' | 'order') => {
+    setAdminMenuMode(mode);
+    setShowCart(false);
+    setCurrentPage('menu');
+    window.location.hash = '/menu';
   };
 
   const handleBack = () => {
@@ -339,7 +351,12 @@ export default function App() {
       {/* Main Content */}
       <div className="pt-9">
         {currentPage === 'landing' && (
-          <LandingPage onNavigate={handleNavigate} language={language} />
+          <LandingPage
+            onNavigate={handleNavigate}
+            onAdminNavigate={handleAdminMenu}
+            isAdmin={user?.role === 'admin'}
+            language={language}
+          />
         )}
 
         {currentPage === 'menu' && (
@@ -351,6 +368,7 @@ export default function App() {
             language={language}
             user={user}
             sessionToken={sessionToken}
+            adminMode={adminMenuMode}
           />
         )}
 
