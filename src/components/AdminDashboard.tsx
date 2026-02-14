@@ -9,7 +9,7 @@ interface AdminDashboardProps {
   language: 'en' | 'ar';
 }
 
-type Tab = 'live-orders' | 'menu' | 'customers';
+type Tab = 'live-orders' | 'history' | 'menu' | 'customers';
 
 interface CustomerSummary {
   customerKey?: string | null;
@@ -41,7 +41,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
         // Backward compatibility: old routes used "orders"
         const normalized = parts[1] === 'orders' ? 'live-orders' : parts[1];
         const tab = normalized as Tab;
-        if (tab === 'live-orders' || tab === 'menu' || tab === 'customers') {
+        if (tab === 'live-orders' || tab === 'history' || tab === 'menu' || tab === 'customers') {
           setActiveTab(tab);
         }
       }
@@ -299,6 +299,13 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
             )}
           </button>
           <button
+            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 ${activeTab === 'history' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
+            onClick={() => setTab('history')}
+          >
+            <ClipboardList size={16} />
+            <span>{text.historyTab}</span>
+          </button>
+          <button
             className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 ${activeTab === 'menu' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
             onClick={() => setTab('menu')}
           >
@@ -324,6 +331,17 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
             embedded={true}
             limitedControl={true}
             ordersMode="live"
+          />
+        )}
+        {activeTab === 'history' && (
+          <AdminPanel
+            onBack={onBack}
+            sessionToken={sessionToken}
+            language={language}
+            initialTab="orders"
+            embedded={true}
+            limitedControl={true}
+            ordersMode="history"
           />
         )}
         {activeTab === 'menu' && (
