@@ -31,6 +31,8 @@ class MainActivity : AppCompatActivity() {
       statusHandler.postDelayed(this, 1000)
     }
   }
+  private val fixedServerUrl = "https://api.sightcoffeespace.com"
+  private val fixedDeviceKey = "1234"
 
   private val prefs by lazy { getSharedPreferences(StatusKeys.PREFS, MODE_PRIVATE) }
 
@@ -39,8 +41,14 @@ class MainActivity : AppCompatActivity() {
     binding = ActivityMainBinding.inflate(layoutInflater)
     setContentView(binding.root)
 
-    binding.serverUrl.setText(prefs.getString("serverUrl", ""))
-    binding.deviceKey.setText(prefs.getString("deviceKey", ""))
+    binding.serverUrl.setText(fixedServerUrl)
+    binding.deviceKey.setText(fixedDeviceKey)
+    binding.serverUrl.isEnabled = false
+    binding.deviceKey.isEnabled = false
+    prefs.edit()
+      .putString("serverUrl", fixedServerUrl)
+      .putString("deviceKey", fixedDeviceKey)
+      .apply()
     setServiceStatus("Idle")
     setServerStatus(prefs.getString(StatusKeys.SERVER_STATUS, "-") ?: "-")
     setPrinterStatus(prefs.getString(StatusKeys.PRINTER_STATUS, "-") ?: "-")
@@ -55,13 +63,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     binding.startButton.setOnClickListener {
-      val serverInput = binding.serverUrl.text.toString().trim()
-      val deviceKey = binding.deviceKey.text.toString().trim()
-      if (serverInput.isEmpty() || deviceKey.isEmpty()) {
-        setError("Missing server URL or device key")
-        setServiceStatus("Config missing")
-        return@setOnClickListener
-      }
+      val serverInput = fixedServerUrl
+      val deviceKey = fixedDeviceKey
       if (!hasBluetoothPermissions()) {
         ensureRuntimePermissions()
         setError("Bluetooth permission required")

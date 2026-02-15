@@ -27,6 +27,8 @@ class PrintService : Service() {
   private val printer = PrinterManager()
   private val prefs by lazy { getSharedPreferences(StatusKeys.PREFS, MODE_PRIVATE) }
   private var errorStreak = 0
+  private val fixedServerUrl = "https://api.sightcoffeespace.com"
+  private val fixedDeviceKey = "1234"
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -40,8 +42,8 @@ class PrintService : Service() {
     if (job?.isActive == true) return START_STICKY
 
     job = scope.launch {
-      val serverUrl = prefs.getString("serverUrl", "") ?: ""
-      val deviceKey = prefs.getString("deviceKey", "") ?: ""
+      val serverUrl = fixedServerUrl
+      val deviceKey = fixedDeviceKey
       val printerAddress = prefs.getString("printerAddress", "") ?: ""
 
       if (serverUrl.isBlank() || deviceKey.isBlank() || printerAddress.isBlank()) {
