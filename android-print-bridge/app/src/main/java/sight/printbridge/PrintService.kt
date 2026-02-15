@@ -112,7 +112,7 @@ class PrintService : Service() {
             } catch (e: Exception) {
               logError("Print failed for job ${job.id}", e)
               try {
-                client.fail(job.id, e.message ?: "Print failed")
+                client.fail(job.id, e.message ?: "Print failed", true)
               } catch (failError: Exception) {
                 logError("Fail report failed for job ${job.id}", failError)
               }

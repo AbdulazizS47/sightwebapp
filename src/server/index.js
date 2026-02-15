@@ -53,6 +53,14 @@ const PRINT_JOB_STALE_MS = Math.max(
   Number(process.env.PRINT_JOB_STALE_MS || 2 * 60 * 1000) || 2 * 60 * 1000,
   30 * 1000
 );
+const PRINT_JOB_RETRY_FAILED_MS = Math.max(
+  Number(process.env.PRINT_JOB_RETRY_FAILED_MS || 60 * 1000) || 60 * 1000,
+  10 * 1000
+);
+const PRINT_JOB_MAX_ATTEMPTS = Math.max(
+  Number(process.env.PRINT_JOB_MAX_ATTEMPTS || 10) || 10,
+  1
+);
 const PRINT_JOB_BACKFILL_MS = Math.max(
   Number(process.env.PRINT_JOB_BACKFILL_MS || 24 * 60 * 60 * 1000) ||
     24 * 60 * 60 * 1000,
@@ -1080,14 +1088,19 @@ printApi.post('/jobs/claim', async (c) => {
   try {
     await conn.beginTransaction();
     const staleBefore = Date.now() - PRINT_JOB_STALE_MS;
+    const retryBefore = Date.now() - PRINT_JOB_RETRY_FAILED_MS;
     const [rows] = await conn.execute(
       `SELECT * FROM print_jobs
-       WHERE status = ?
-          OR (status = ? AND claimedAt IS NOT NULL AND claimedAt < ?)
-       ORDER BY createdAt ASC
+       WHERE attempts < ?
+         AND (
+           status = ?
+           OR (status = ? AND claimedAt IS NOT NULL AND claimedAt < ?)
+           OR (status = ? AND (claimedAt IS NULL OR claimedAt < ?))
+         )
+       ORDER BY (status = 'pending') DESC, createdAt ASC
        LIMIT 1
        FOR UPDATE`,
-      ['pending', 'printing', staleBefore]
+      [PRINT_JOB_MAX_ATTEMPTS, 'pending', 'printing', staleBefore, 'failed', retryBefore]
     );
     let job = Array.isArray(rows) && rows[0] ? rows[0] : null;
     if (!job && PRINT_JOB_BACKFILL_MS > 0) {
@@ -1196,9 +1209,11 @@ printApi.post('/jobs/:id/fail', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const message = typeof body?.error === 'string' ? body.error : 'Print failed';
+    const retry = Boolean(body?.retry);
+    const status = retry ? 'failed' : 'failed';
     await pool.execute(
-      'UPDATE print_jobs SET status = ?, lastError = ?, printedAt = NULL WHERE id = ?',
-      ['failed', message, id]
+      'UPDATE print_jobs SET status = ?, lastError = ?, printedAt = NULL, claimedAt = ? WHERE id = ?',
+      [status, message, Date.now(), id]
     );
     return c.json({ success: true });
   } catch (e) {

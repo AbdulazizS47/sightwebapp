@@ -114,8 +114,8 @@ class PrintClient(private val serverUrl: String, private val deviceKey: String) 
     execute(req)
   }
 
-  fun fail(jobId: Long, error: String) {
-    val body = JSONObject(mapOf("error" to error)).toString()
+  fun fail(jobId: Long, error: String, retry: Boolean) {
+    val body = JSONObject(mapOf("error" to error, "retry" to retry)).toString()
     val req = Request.Builder()
       .url("${serverUrl.trimEnd('/')}/api/print/jobs/${jobId}/fail")
       .addHeader("X-Device-Key", deviceKey)
