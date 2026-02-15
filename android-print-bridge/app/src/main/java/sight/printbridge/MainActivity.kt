@@ -7,6 +7,8 @@ import android.content.pm.PackageManager
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -22,8 +24,15 @@ class MainActivity : AppCompatActivity() {
   private val adapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
   private val printer = PrinterManager()
   private val ioScope = CoroutineScope(Dispatchers.IO)
+  private val statusHandler = Handler(Looper.getMainLooper())
+  private val statusRunnable = object : Runnable {
+    override fun run() {
+      refreshStatusFromPrefs()
+      statusHandler.postDelayed(this, 1000)
+    }
+  }
 
-  private val prefs by lazy { getSharedPreferences("print_bridge", MODE_PRIVATE) }
+  private val prefs by lazy { getSharedPreferences(StatusKeys.PREFS, MODE_PRIVATE) }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -32,6 +41,11 @@ class MainActivity : AppCompatActivity() {
 
     binding.serverUrl.setText(prefs.getString("serverUrl", ""))
     binding.deviceKey.setText(prefs.getString("deviceKey", ""))
+    setServiceStatus("Idle")
+    setServerStatus(prefs.getString(StatusKeys.SERVER_STATUS, "-") ?: "-")
+    setPrinterStatus(prefs.getString(StatusKeys.PRINTER_STATUS, "-") ?: "-")
+    setLastOrderText(prefs.getString(StatusKeys.LAST_ORDER, "-") ?: "-")
+    setErrorText(prefs.getString(StatusKeys.LAST_ERROR, "-") ?: "-")
 
     ensureRuntimePermissions()
     loadPairedPrinters()
@@ -45,43 +59,52 @@ class MainActivity : AppCompatActivity() {
       val deviceKey = binding.deviceKey.text.toString().trim()
       if (serverInput.isEmpty() || deviceKey.isEmpty()) {
         setError("Missing server URL or device key")
+        setServiceStatus("Config missing")
         return@setOnClickListener
       }
       if (!hasBluetoothPermissions()) {
         ensureRuntimePermissions()
         setError("Bluetooth permission required")
+        setPrinterStatus("Bluetooth permission required")
         return@setOnClickListener
       }
       val device = selectedDevice()
       if (device == null) {
         setError("Select a printer")
+        setPrinterStatus("No printer selected")
         return@setOnClickListener
       }
       val normalized = normalizeServerUrl(serverInput)
       if (normalized == null) {
         setError("Invalid server URL")
+        setServerStatus("Invalid URL")
         return@setOnClickListener
       }
       if (normalized.startsWith("http://") && !isLocalHost(normalized)) {
         setError("Use https for public domains")
+        setServerStatus("Use https for public domains")
         return@setOnClickListener
       }
 
       ioScope.launch {
         try {
-          setStatus("Checking server...")
+          setServiceStatus("Starting...")
+          setServerStatus("Checking...")
           val client = PrintClient(normalized, deviceKey)
           client.ping()
           client.pingDeviceKey()
           prefs.edit().putString("serverUrl", normalized).putString("deviceKey", deviceKey).apply()
           prefs.edit().putString("printerAddress", device.address).apply()
-          setStatus("Server OK")
+          setServerStatus("OK")
+          setServiceStatus("Running")
           ContextCompat.startForegroundService(
             this@MainActivity,
             Intent(this@MainActivity, PrintService::class.java),
           )
         } catch (e: Exception) {
+          setServerStatus("Error")
           setError("Server check failed: ${e.message}")
+          setServiceStatus("Stopped")
         }
       }
     }
@@ -92,28 +115,42 @@ class MainActivity : AppCompatActivity() {
           val device = selectedDevice()
           if (device == null) {
             setError("No printer selected")
+            setPrinterStatus("No printer selected")
             return@launch
           }
           if (!hasBluetoothPermissions()) {
             ensureRuntimePermissions()
             setError("Bluetooth permission required")
+            setPrinterStatus("Bluetooth permission required")
             return@launch
           }
           if (!printer.isConnected()) {
-            setStatus("Connecting...")
+            setPrinterStatus("Connecting...")
             printer.connect(device)
-            setStatus("Connected: ${device.name}")
+            setPrinterStatus("Connected: ${device.name}")
           }
           prefs.edit().putString("printerAddress", device.address).apply()
           val renderer = ReceiptRenderer(this@MainActivity)
           val bitmap = renderer.render(sampleOrder(), loadLogo())
           printBitmap(bitmap)
-          setStatus("Test print sent")
+          setLastOrderText("Test print")
+          setPrinterStatus("Test print sent")
         } catch (e: Exception) {
+          setPrinterStatus("Test print failed")
           setError("Test print failed: ${e.message}")
         }
       }
     }
+  }
+
+  override fun onStart() {
+    super.onStart()
+    statusHandler.post(statusRunnable)
+  }
+
+  override fun onStop() {
+    super.onStop()
+    statusHandler.removeCallbacks(statusRunnable)
   }
 
   override fun onRequestPermissionsResult(
@@ -167,6 +204,9 @@ class MainActivity : AppCompatActivity() {
       val index = devices.indexOfFirst { it.address == savedAddress }
       if (index >= 0) spinner.setSelection(index)
     }
+    if (devices.isNotEmpty()) {
+      setPrinterStatus("Ready")
+    }
   }
 
   private fun selectedDevice(): BluetoothDevice? {
@@ -180,6 +220,7 @@ class MainActivity : AppCompatActivity() {
     if (!hasBluetoothPermissions()) {
       ensureRuntimePermissions()
       setError("Bluetooth permission required")
+      setPrinterStatus("Bluetooth permission required")
       return
     }
     val device = selectedDevice() ?: return
@@ -187,8 +228,9 @@ class MainActivity : AppCompatActivity() {
     ioScope.launch {
       try {
         printer.connect(device)
-        setStatus("Connected: ${device.name}")
+        setPrinterStatus("Connected: ${device.name}")
       } catch (e: Exception) {
+        setPrinterStatus("Connect failed")
         setError("Connect failed: ${e.message}")
       }
     }
@@ -197,7 +239,7 @@ class MainActivity : AppCompatActivity() {
   private fun disconnectPrinter() {
     ioScope.launch {
       printer.disconnect()
-      setStatus("Disconnected")
+      setPrinterStatus("Disconnected")
     }
   }
 
@@ -210,12 +252,49 @@ class MainActivity : AppCompatActivity() {
     }
   }
 
-  private fun setStatus(text: String) {
-    runOnUiThread { binding.statusText.text = "Status: $text" }
+  private fun setServiceStatus(text: String) {
+    prefs.edit().putString(StatusKeys.SERVICE_STATUS, text).apply()
+    runOnUiThread { binding.serviceStatusText.text = text }
+  }
+
+  private fun setServerStatus(text: String) {
+    prefs.edit().putString(StatusKeys.SERVER_STATUS, text).apply()
+    runOnUiThread { binding.serverStatusText.text = text }
+  }
+
+  private fun setPrinterStatus(text: String) {
+    prefs.edit().putString(StatusKeys.PRINTER_STATUS, text).apply()
+    runOnUiThread { binding.printerStatusText.text = text }
+  }
+
+  private fun setLastOrderText(text: String) {
+    prefs.edit().putString(StatusKeys.LAST_ORDER, text).apply()
+    runOnUiThread { binding.lastOrderText.text = text }
   }
 
   private fun setError(text: String) {
-    runOnUiThread { binding.errorText.text = "Last Error: $text" }
+    prefs.edit()
+      .putString(StatusKeys.LAST_ERROR, text)
+      .putLong(StatusKeys.LAST_ERROR_AT, System.currentTimeMillis())
+      .apply()
+    runOnUiThread { binding.errorText.text = text }
+  }
+
+  private fun setErrorText(text: String) {
+    runOnUiThread { binding.errorText.text = text }
+  }
+
+  private fun refreshStatusFromPrefs() {
+    val server = prefs.getString(StatusKeys.SERVER_STATUS, "-") ?: "-"
+    val printer = prefs.getString(StatusKeys.PRINTER_STATUS, "-") ?: "-"
+    val service = prefs.getString(StatusKeys.SERVICE_STATUS, "-") ?: "-"
+    val lastOrder = prefs.getString(StatusKeys.LAST_ORDER, "-") ?: "-"
+    val lastError = prefs.getString(StatusKeys.LAST_ERROR, "-") ?: "-"
+    binding.serverStatusText.text = server
+    binding.printerStatusText.text = printer
+    binding.serviceStatusText.text = service
+    binding.lastOrderText.text = lastOrder
+    binding.errorText.text = lastError
   }
 
   private fun hasBluetoothConnectPermission(): Boolean {

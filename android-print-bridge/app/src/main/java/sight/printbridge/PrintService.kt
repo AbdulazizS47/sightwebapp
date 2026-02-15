@@ -25,11 +25,14 @@ class PrintService : Service() {
   private val scope = CoroutineScope(Dispatchers.IO)
   private var job: Job? = null
   private val printer = PrinterManager()
+  private val prefs by lazy { getSharedPreferences(StatusKeys.PREFS, MODE_PRIVATE) }
+  private var errorStreak = 0
 
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onCreate() {
     super.onCreate()
+    setServiceStatus("Starting")
     startForeground(1, buildNotification("Starting print service"))
   }
 
@@ -37,29 +40,35 @@ class PrintService : Service() {
     if (job?.isActive == true) return START_STICKY
 
     job = scope.launch {
-      val prefs = getSharedPreferences("print_bridge", MODE_PRIVATE)
       val serverUrl = prefs.getString("serverUrl", "") ?: ""
       val deviceKey = prefs.getString("deviceKey", "") ?: ""
       val printerAddress = prefs.getString("printerAddress", "") ?: ""
 
       if (serverUrl.isBlank() || deviceKey.isBlank() || printerAddress.isBlank()) {
         updateNotification("Missing config")
+        setServiceStatus("Config missing")
         stopSelf()
         return@launch
       }
       val normalized = normalizeServerUrl(serverUrl)
       if (normalized == null) {
         updateNotification("Invalid server URL")
+        setServerStatus("Invalid URL")
+        setServiceStatus("Stopped")
         stopSelf()
         return@launch
       }
       if (normalized.startsWith("http://") && !isLocalHost(normalized)) {
         updateNotification("Use https for public domains")
+        setServerStatus("Use https for public domains")
+        setServiceStatus("Stopped")
         stopSelf()
         return@launch
       }
       if (!hasBluetoothPermissions()) {
         updateNotification("Bluetooth permission required")
+        setPrinterStatus("Bluetooth permission required")
+        setServiceStatus("Stopped")
         stopSelf()
         return@launch
       }
@@ -70,21 +79,32 @@ class PrintService : Service() {
 
       try {
         updateNotification("Checking server...")
+        setServerStatus("Checking...")
         client.ping()
         client.pingDeviceKey()
+        setServerStatus("OK")
       } catch (e: Exception) {
         logError("Server check failed", e)
         updateNotification(errorMessage(e))
+        setServerStatus("Error")
+        setError(errorMessage(e))
+        setServiceStatus("Stopped")
         stopSelf()
         return@launch
       }
 
       updateNotification("Polling")
+      setServiceStatus("Running")
+      setPrinterStatus("Ready")
 
       while (true) {
+        var delayMs = 4000L
         try {
           val job = client.claimJob()
+          errorStreak = 0
           if (job != null) {
+            setServerStatus("Job claimed")
+            setLastOrder(job.order.orderNumber)
             updateNotification("Printing ${job.order.orderNumber}")
             try {
               ensureConnected(printerAddress)
@@ -101,13 +121,9 @@ class PrintService : Service() {
                 printer.write(EscPos.bitmap24(bitmap))
                 printer.write(EscPos.feed(3))
               }
-              try {
-                client.ack(job.id)
-              } catch (e: Exception) {
-                logError("Ack failed for job ${job.id}", e)
-                updateNotification("Printed (ack failed)")
-                delay(1000)
-              }
+              ackWithRetry(client, job.id)
+              setPrinterStatus("Printed ${job.order.orderNumber}")
+              setLastOrder(job.order.orderNumber)
               updateNotification("Printed ${job.order.orderNumber}")
             } catch (e: Exception) {
               logError("Print failed for job ${job.id}", e)
@@ -116,15 +132,23 @@ class PrintService : Service() {
               } catch (failError: Exception) {
                 logError("Fail report failed for job ${job.id}", failError)
               }
+              setPrinterStatus("Print failed")
+              setError(shortMessage(e))
               updateNotification("Print failed: ${shortMessage(e)}")
             }
+          } else {
+            setServerStatus("No jobs")
           }
         } catch (e: Exception) {
           logError("Polling error", e)
           updateNotification(errorMessage(e))
+          setServerStatus("Polling error")
+          setError(errorMessage(e))
+          errorStreak += 1
+          delayMs = (4000L * (errorStreak + 1)).coerceAtMost(30000L)
         }
 
-        delay(4000)
+        delay(delayMs)
       }
     }
 
@@ -135,6 +159,7 @@ class PrintService : Service() {
     super.onDestroy()
     job?.cancel()
     printer.disconnect()
+    setServiceStatus("Stopped")
   }
 
   private fun ensureConnected(address: String) {
@@ -143,6 +168,7 @@ class PrintService : Service() {
     val device = adapter?.bondedDevices?.firstOrNull { it.address == address }
       ?: throw IllegalStateException("Printer not paired")
     printer.connect(device)
+    setPrinterStatus("Connected: ${device.name}")
   }
 
   private fun buildNotification(text: String): Notification {
@@ -192,6 +218,52 @@ class PrintService : Service() {
   private fun truncate(value: String, max: Int): String {
     if (value.length <= max) return value
     return value.take(max) + "..."
+  }
+
+  private fun setServerStatus(text: String) {
+    prefs.edit().putString(StatusKeys.SERVER_STATUS, text).apply()
+  }
+
+  private fun setPrinterStatus(text: String) {
+    prefs.edit().putString(StatusKeys.PRINTER_STATUS, text).apply()
+  }
+
+  private fun setServiceStatus(text: String) {
+    prefs.edit().putString(StatusKeys.SERVICE_STATUS, text).apply()
+  }
+
+  private fun setLastOrder(orderNumber: String) {
+    prefs.edit()
+      .putString(StatusKeys.LAST_ORDER, orderNumber)
+      .putLong(StatusKeys.LAST_ORDER_AT, System.currentTimeMillis())
+      .apply()
+  }
+
+  private fun setError(text: String) {
+    prefs.edit()
+      .putString(StatusKeys.LAST_ERROR, text)
+      .putLong(StatusKeys.LAST_ERROR_AT, System.currentTimeMillis())
+      .apply()
+  }
+
+  private suspend fun ackWithRetry(client: PrintClient, jobId: Long) {
+    var attempt = 0
+    var lastError: Exception? = null
+    while (attempt < 3) {
+      try {
+        client.ack(jobId)
+        return
+      } catch (e: Exception) {
+        lastError = e
+        attempt += 1
+        delay(1000L * attempt)
+      }
+    }
+    if (lastError != null) {
+      logError("Ack failed for job $jobId", lastError)
+      setServerStatus("Ack failed")
+      setError(lastError.message ?: "Ack failed")
+    }
   }
 
   private fun bitmapHasInk(bitmap: android.graphics.Bitmap): Boolean {

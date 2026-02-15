@@ -86,15 +86,99 @@
   </LinearLayout>
 
   <TextView
-    android:id="@+id/statusText"
+    android:id="@+id/serviceStatusLabel"
     android:layout_width="0dp"
     android:layout_height="wrap_content"
-    android:text="@string/status"
-    android:textSize="14sp"
+    android:text="@string/service_status"
+    android:textSize="12sp"
     app:layout_constraintTop_toBottomOf="@id/buttonRow"
     app:layout_constraintStart_toStartOf="parent"
     app:layout_constraintEnd_toEndOf="parent"
     android:layout_marginTop="20dp"
+    android:layout_marginHorizontal="24dp"/>
+
+  <TextView
+    android:id="@+id/serviceStatusText"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:text="-"
+    android:textSize="14sp"
+    app:layout_constraintTop_toBottomOf="@id/serviceStatusLabel"
+    app:layout_constraintStart_toStartOf="parent"
+    app:layout_constraintEnd_toEndOf="parent"
+    android:layout_marginTop="4dp"
+    android:layout_marginHorizontal="24dp"/>
+
+  <TextView
+    android:id="@+id/serverStatusLabel"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:text="@string/server_status"
+    android:textSize="12sp"
+    app:layout_constraintTop_toBottomOf="@id/serviceStatusText"
+    app:layout_constraintStart_toStartOf="parent"
+    app:layout_constraintEnd_toEndOf="parent"
+    android:layout_marginTop="12dp"
+    android:layout_marginHorizontal="24dp"/>
+
+  <TextView
+    android:id="@+id/serverStatusText"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:text="-"
+    android:textSize="14sp"
+    app:layout_constraintTop_toBottomOf="@id/serverStatusLabel"
+    app:layout_constraintStart_toStartOf="parent"
+    app:layout_constraintEnd_toEndOf="parent"
+    android:layout_marginTop="4dp"
+    android:layout_marginHorizontal="24dp"/>
+
+  <TextView
+    android:id="@+id/printerStatusLabel"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:text="@string/printer_status"
+    android:textSize="12sp"
+    app:layout_constraintTop_toBottomOf="@id/serverStatusText"
+    app:layout_constraintStart_toStartOf="parent"
+    app:layout_constraintEnd_toEndOf="parent"
+    android:layout_marginTop="12dp"
+    android:layout_marginHorizontal="24dp"/>
+
+  <TextView
+    android:id="@+id/printerStatusText"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:text="-"
+    android:textSize="14sp"
+    app:layout_constraintTop_toBottomOf="@id/printerStatusLabel"
+    app:layout_constraintStart_toStartOf="parent"
+    app:layout_constraintEnd_toEndOf="parent"
+    android:layout_marginTop="4dp"
+    android:layout_marginHorizontal="24dp"/>
+
+  <TextView
+    android:id="@+id/lastOrderLabel"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:text="@string/last_order"
+    android:textSize="12sp"
+    app:layout_constraintTop_toBottomOf="@id/printerStatusText"
+    app:layout_constraintStart_toStartOf="parent"
+    app:layout_constraintEnd_toEndOf="parent"
+    android:layout_marginTop="12dp"
+    android:layout_marginHorizontal="24dp"/>
+
+  <TextView
+    android:id="@+id/lastOrderText"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:text="-"
+    android:textSize="14sp"
+    app:layout_constraintTop_toBottomOf="@id/lastOrderLabel"
+    app:layout_constraintStart_toStartOf="parent"
+    app:layout_constraintEnd_toEndOf="parent"
+    android:layout_marginTop="4dp"
     android:layout_marginHorizontal="24dp"/>
 
   <TextView
@@ -103,10 +187,10 @@
     android:layout_height="wrap_content"
     android:text="@string/last_error"
     android:textSize="12sp"
-    app:layout_constraintTop_toBottomOf="@id/statusText"
+    app:layout_constraintTop_toBottomOf="@id/lastOrderText"
     app:layout_constraintStart_toStartOf="parent"
     app:layout_constraintEnd_toEndOf="parent"
-    android:layout_marginTop="8dp"
+    android:layout_marginTop="12dp"
     android:layout_marginHorizontal="24dp"/>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

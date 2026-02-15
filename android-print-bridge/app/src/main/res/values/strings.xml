@@ -9,6 +9,9 @@
   <string name="test_print">Test Print</string>
   <string name="start">Start</string>
   <string name="stop">Stop</string>
-  <string name="status">Status</string>
+  <string name="service_status">Service Status</string>
+  <string name="server_status">Server Status</string>
+  <string name="printer_status">Printer Status</string>
+  <string name="last_order">Last Order</string>
   <string name="last_error">Last Error</string>
 </resources>
