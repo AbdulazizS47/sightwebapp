@@ -1236,9 +1236,12 @@ export function MenuPage({
 
       {canOrder && (
         <>
-          <div className="h-20" />
-          <div className="fixed bottom-0 left-0 right-0 z-40 bg-[var(--crisp-white)] border-t border-[var(--matte-black)]">
-            <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+          <div style={{ height: 88 }} />
+          <div
+            className="fixed left-0 right-0 z-40 bg-[var(--crisp-white)] border-t border-[var(--matte-black)]"
+            style={{ bottom: 0 }}
+          >
+            <div className="mx-auto px-4 py-3 flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="relative w-10 h-10 rounded-full border border-[var(--matte-black)]/40 bg-[var(--crisp-white)] flex items-center justify-center">
                   <ShoppingCart size={18} className="text-[var(--matte-black)]" />
