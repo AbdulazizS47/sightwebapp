@@ -636,6 +636,16 @@ app.post('/api/admin/reset-menu', async (c) => {
     if (!allowReset) {
       return c.json({ error: 'Menu reset disabled' }, 403);
     }
+    const demoCategoryIds = ['espresso', 'v60', 'hot', 'cold', 'pastries'];
+    const demoItemIds = [
+      'dbl-espresso',
+      'americano',
+      'cappuccino',
+      'latte',
+      'v60-basic',
+      'iced-latte',
+      'cheesecake',
+    ];
     const categories = [
       { id: 'espresso', nameEn: 'Espresso', nameAr: 'إسبريسو', order: 1 },
       {
@@ -660,7 +670,7 @@ app.post('/api/admin/reset-menu', async (c) => {
 
     // Clean orphaned items
     const [existingItems] = await pool.execute('SELECT * FROM items');
-    const validCategoryIds = categories.map((c) => c.id);
+    const validCategoryIds = demoCategoryIds;
     for (const item of existingItems) {
       if (!validCategoryIds.includes(item.category)) {
         await pool.execute('DELETE FROM items WHERE id = ?', [item.id]);
@@ -769,6 +779,33 @@ app.post('/api/admin/reset-menu', async (c) => {
   } catch (e) {
     console.error('Error updating categories:', e);
     return c.json({ error: 'Failed to update categories' }, 500);
+  }
+});
+
+// Admin Menu: cleanup demo items safely (by known demo IDs only)
+app.post('/api/admin/menu/cleanup-demo', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const demoItemIds = [
+      'dbl-espresso',
+      'americano',
+      'cappuccino',
+      'latte',
+      'v60-basic',
+      'iced-latte',
+      'cheesecake',
+    ];
+    const placeholders = demoItemIds.map(() => '?').join(',');
+    const [res] = await pool.execute(
+      `DELETE FROM items WHERE id IN (${placeholders})`,
+      demoItemIds
+    );
+    const deleted = Number(res?.affectedRows || 0);
+    return c.json({ success: true, deleted });
+  } catch (e) {
+    console.error('Error cleaning demo items', e);
+    return c.json({ error: 'Failed to clean demo items' }, 500);
   }
 });
 
