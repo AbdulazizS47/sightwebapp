@@ -632,6 +632,10 @@ app.post('/api/admin/reset-menu', async (c) => {
   const unauthorized = await requireAdmin(c);
   if (unauthorized) return unauthorized;
   try {
+    const allowReset = (process.env.ALLOW_MENU_RESET || '').trim().toLowerCase() === 'true';
+    if (!allowReset) {
+      return c.json({ error: 'Menu reset disabled' }, 403);
+    }
     const categories = [
       { id: 'espresso', nameEn: 'Espresso', nameAr: 'إسبريسو', order: 1 },
       {

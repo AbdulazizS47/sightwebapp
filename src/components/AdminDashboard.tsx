@@ -69,7 +69,6 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       menuTab: 'Menu',
       customersTab: 'Customers',
       refresh: 'Refresh',
-      seedMenu: 'Seed Menu',
       liveNow: 'Live now',
       preparing: 'Preparing',
       ready: 'Ready',
@@ -97,7 +96,6 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       menuTab: 'القائمة',
       customersTab: 'العملاء',
       refresh: 'تحديث',
-      seedMenu: 'تهيئة القائمة',
       liveNow: 'الطلبات الآن',
       preparing: 'قيد التحضير',
       ready: 'جاهز',
@@ -154,26 +152,6 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
     }
   };
 
-  const seedMenu = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${apiBaseUrl}/admin/reset-menu`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${sessionToken}` },
-      });
-      const data = await res.json();
-      if (data.success) {
-        alert(language === 'en' ? 'Menu seeded successfully' : 'تم تهيئة القائمة بنجاح');
-      } else {
-        alert('Failed to seed menu: ' + (data.error || 'Unknown error'));
-      }
-    } catch (e) {
-      console.error('Error seeding menu', e);
-      alert(language === 'en' ? 'Error seeding menu' : 'حدث خطأ أثناء تهيئة القائمة');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
     if (activeTab === 'customers') {
@@ -223,16 +201,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
               <RefreshCw size={24} className={loading ? 'animate-spin' : ''} />
             </button>
           )}
-          {activeTab === 'menu' && (
-            <button
-              onClick={seedMenu}
-              disabled={loading}
-              className="text-[var(--matte-black)] hover:text-[var(--espresso-brown)] transition-colors disabled:opacity-50"
-              aria-label={text.seedMenu}
-            >
-              <RefreshCw size={24} className={loading ? 'animate-spin' : ''} />
-            </button>
-          )}
+          {activeTab === 'menu' && <div className="w-6" />}
         </div>
 
         {/* Quick stats */}
