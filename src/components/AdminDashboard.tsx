@@ -57,6 +57,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
     window.location.hash = `#/dashboard/${tab}`;
   };
   const [loading, setLoading] = useState(false);
+  const [cleanupLoading, setCleanupLoading] = useState(false);
   const [customers, setCustomers] = useState<CustomerSummary[]>([]);
   const [customerQuery, setCustomerQuery] = useState('');
   const [stats, setStats] = useState<OrderStats | null>(null);
@@ -69,6 +70,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       menuTab: 'Menu',
       customersTab: 'Customers',
       refresh: 'Refresh',
+      cleanupDemo: 'Remove Demo Items',
       liveNow: 'Live now',
       preparing: 'Preparing',
       ready: 'Ready',
@@ -96,6 +98,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       menuTab: 'القائمة',
       customersTab: 'العملاء',
       refresh: 'تحديث',
+      cleanupDemo: 'حذف العناصر التجريبية',
       liveNow: 'الطلبات الآن',
       preparing: 'قيد التحضير',
       ready: 'جاهز',
@@ -201,7 +204,45 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
               <RefreshCw size={24} className={loading ? 'animate-spin' : ''} />
             </button>
           )}
-          {activeTab === 'menu' && <div className="w-6" />}
+          {activeTab === 'menu' && (
+            <button
+              onClick={async () => {
+                const ok = window.confirm(
+                  language === 'en'
+                    ? 'Remove demo items only? This will not touch your real menu.'
+                    : 'هل تريد حذف العناصر التجريبية فقط؟ لن يؤثر على قائمتك الحقيقية.'
+                );
+                if (!ok) return;
+                setCleanupLoading(true);
+                try {
+                  const res = await fetch(`${apiBaseUrl}/admin/menu/cleanup-demo`, {
+                    method: 'POST',
+                    headers: { Authorization: `Bearer ${sessionToken}` },
+                  });
+                  const data = await res.json();
+                  if (data.success) {
+                    alert(
+                      language === 'en'
+                        ? `Removed ${data.deleted || 0} demo items.`
+                        : `تم حذف ${data.deleted || 0} عناصر تجريبية.`
+                    );
+                  } else {
+                    alert('Failed to remove demo items: ' + (data.error || 'Unknown error'));
+                  }
+                } catch (e) {
+                  console.error('Error removing demo items', e);
+                  alert(language === 'en' ? 'Error removing demo items' : 'حدث خطأ أثناء الحذف');
+                } finally {
+                  setCleanupLoading(false);
+                }
+              }}
+              disabled={cleanupLoading}
+              className="text-[var(--matte-black)] hover:text-[var(--espresso-brown)] transition-colors disabled:opacity-50 text-sm"
+              aria-label={text.cleanupDemo}
+            >
+              {cleanupLoading ? '...' : text.cleanupDemo}
+            </button>
+          )}
         </div>
 
         {/* Quick stats */}
