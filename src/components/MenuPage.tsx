@@ -687,12 +687,12 @@ export function MenuPage({
                             <Coffee
                               size={16}
                               strokeWidth={1.8}
-                              className="text-[var(--matte-black)] scale-[1.2]"
+                              className="text-[var(--matte-black)] scale-[1.9]"
                             />
                             <Slash
                               size={18}
                               strokeWidth={1.8}
-                              className="absolute text-[var(--matte-black)] scale-[1.2]"
+                              className="absolute text-[var(--matte-black)] scale-[1.9]"
                             />
                           </div>
                         );
@@ -700,7 +700,7 @@ export function MenuPage({
 
                       if (!icon) {
                         return (
-                          <ShoppingBag size={16} className="text-[var(--matte-black)] scale-[1.2]" />
+                          <ShoppingBag size={16} className="text-[var(--matte-black)] scale-[1.9]" />
                         );
                       }
 
@@ -713,7 +713,7 @@ export function MenuPage({
                         <img
                           src={resolved}
                           alt={language === 'en' ? category.nameEn : category.nameAr}
-                          className="w-5 h-5 object-contain scale-[1.2]"
+                          className="w-5 h-5 object-contain scale-[1.9]"
                         />
                       );
                     })()}
