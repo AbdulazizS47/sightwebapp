@@ -568,6 +568,10 @@ export function MenuPage({
   };
 
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const cartTotal = cart.reduce(
+    (sum, item) => sum + (Number(item.price) || 0) * (Number(item.quantity) || 0),
+    0
+  );
   const noFrameCategoryIds = new Set(['not-coffee']);
 
   if (loading) {
@@ -760,36 +764,7 @@ export function MenuPage({
               )}
             </div>
 
-            {canOrder && (
-              <button
-                onClick={() => onOpenCart()}
-                aria-label="Open cart"
-                className={`relative flex-shrink-0 w-10 h-10 rounded-full border transition-all ${
-                  cartItemCount > 0
-                    ? 'border-[var(--espresso-brown)] bg-[var(--espresso-brown)] text-[var(--crisp-white)] shadow-[0_6px_14px_rgba(88,62,45,0.25)]'
-                    : 'border-[var(--matte-black)]/40 bg-[var(--crisp-white)] text-[var(--matte-black)] shadow-[0_4px_10px_rgba(0,0,0,0.08)] hover:border-[var(--espresso-brown)]'
-                }`}
-              >
-                <div className="w-full h-full flex items-center justify-center">
-                  <ShoppingCart
-                    size={18}
-                    className={
-                      cartItemCount > 0 ? 'text-[var(--crisp-white)]' : 'text-[var(--matte-black)]'
-                    }
-                  />
-                </div>
-                {cartItemCount > 0 && (
-                  <span
-                    className={
-                      `absolute -top-1 bg-[var(--crisp-white)] text-[var(--espresso-brown)] text-[10px] min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border border-[var(--espresso-brown)] ` +
-                      (isRTL ? '-left-1' : '-right-1')
-                    }
-                  >
-                    {cartItemCount}
-                  </span>
-                )}
-              </button>
-            )}
+            <div className="w-4" />
           </div>
 
           {/* Edit Category Modal */}
@@ -1258,6 +1233,43 @@ export function MenuPage({
           );
         })}
       </div>
+
+      {canOrder && (
+        <>
+          <div className="h-20" />
+          <div className="fixed bottom-0 left-0 right-0 z-40 bg-[var(--crisp-white)] border-t border-[var(--matte-black)]">
+            <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="relative w-10 h-10 rounded-full border border-[var(--matte-black)]/40 bg-[var(--crisp-white)] flex items-center justify-center">
+                  <ShoppingCart size={18} className="text-[var(--matte-black)]" />
+                  {cartItemCount > 0 && (
+                    <span
+                      className={
+                        `absolute -top-1 bg-[var(--crisp-white)] text-[var(--espresso-brown)] text-[10px] min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border border-[var(--espresso-brown)] ` +
+                        (isRTL ? '-left-1' : '-right-1')
+                      }
+                    >
+                      {cartItemCount}
+                    </span>
+                  )}
+                </div>
+                <div className="text-sm">
+                  <div className="text-[var(--matte-black)]">{text.cart}</div>
+                  <div className="text-[var(--matte-black)] opacity-70 text-xs">
+                    {cartTotal.toFixed(2)} {text.sar}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => onOpenCart()}
+                className="px-5 py-2.5 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors text-sm border-2 border-[var(--espresso-brown)] hover:border-[var(--matte-black)]"
+              >
+                {language === 'en' ? 'View Cart' : 'عرض السلة'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
