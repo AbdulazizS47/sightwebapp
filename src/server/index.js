@@ -49,6 +49,9 @@ const OTP_MAX_PER_HOUR = Math.max(Number(process.env.OTP_MAX_PER_HOUR || 5) || 5
 const OTP_MAX_ATTEMPTS = Math.max(Number(process.env.OTP_MAX_ATTEMPTS || 5) || 5, 1);
 const OTP_PEPPER = (process.env.OTP_PEPPER || 'dev-pepper-change-me').trim();
 const SMS_PROVIDER = (process.env.SMS_PROVIDER || 'console').trim().toLowerCase();
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || process.env.UPLOADS_BASE_URL || '')
+  .trim()
+  .replace(/\/+$/, '');
 const PRINT_JOB_STALE_MS = Math.max(
   Number(process.env.PRINT_JOB_STALE_MS || 2 * 60 * 1000) || 2 * 60 * 1000,
   30 * 1000
@@ -174,6 +177,18 @@ function requirePrintDevice(c) {
   const key = (c.req.header('X-Device-Key') || '').trim();
   if (!key || key !== PRINT_DEVICE_KEY) return c.json({ error: 'Unauthorized' }, 401);
   return null;
+}
+
+function getPublicBaseUrl(c) {
+  if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL;
+  const forwardedHost = (c.req.header('x-forwarded-host') || '').split(',')[0].trim();
+  if (forwardedHost) {
+    const forwardedProto = (c.req.header('x-forwarded-proto') || 'https')
+      .split(',')[0]
+      .trim();
+    return `${forwardedProto}://${forwardedHost}`;
+  }
+  return new URL(c.req.url).origin;
 }
 
 // Initialize DB schema
@@ -1587,7 +1602,7 @@ app.post('/api/admin/upload-image', async (c) => {
     const buf = Buffer.from(await file.arrayBuffer());
     await fs.writeFile(path.join(UPLOADS_DIR, name), buf);
 
-    const origin = new URL(c.req.url).origin;
+    const origin = getPublicBaseUrl(c);
     return c.json({ success: true, imageUrl: `${origin}/uploads/${name}` });
   } catch (e) {
     console.error('Error uploading image', e);

@@ -16,6 +16,7 @@ import v60Icon from '../assets/V60.png';
 import notCoffeeIcon from '../assets/NOT COFFEE.ong.png';
 import sweetsIcon from '../assets/SWEET.png';
 import { apiBaseUrl } from '../utils/supabase/info';
+import { resolveImageUrl } from '../utils/media';
 
 interface MenuItem {
   id: string;
@@ -963,7 +964,7 @@ export function MenuPage({
                         {item.imageUrl && (
                           <div className="flex items-center gap-2">
                             <img
-                              src={item.imageUrl}
+                              src={resolveImageUrl(item.imageUrl)}
                               alt="Preview"
                               className="w-16 h-16 object-cover border"
                             />
@@ -1102,7 +1103,7 @@ export function MenuPage({
                         {item.imageUrl && (
                           <div className="w-28 flex-shrink-0 bg-[var(--matte-black)] bg-opacity-10">
                             <img
-                              src={item.imageUrl}
+                              src={resolveImageUrl(item.imageUrl)}
                               alt={language === 'en' ? item.nameEn : item.nameAr}
                               className="w-full h-full object-cover"
                             />
@@ -1192,7 +1193,7 @@ export function MenuPage({
                           />
                           {newItem.imageUrl && (
                             <img
-                              src={newItem.imageUrl as string}
+                              src={resolveImageUrl(newItem.imageUrl as string)}
                               alt="Preview"
                               className="w-full h-32 object-cover border"
                             />

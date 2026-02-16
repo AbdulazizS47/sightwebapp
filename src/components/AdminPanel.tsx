@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, RefreshCw, Plus, Edit2, X } from 'lucide-react';
 import { apiBaseUrl } from '../utils/supabase/info';
+import { resolveImageUrl } from '../utils/media';
 
 interface Order {
   id: string;
@@ -1225,7 +1226,7 @@ export function AdminPanel({
                               {item.imageUrl && (
                                 <div className="flex items-end gap-3">
                                   <img
-                                    src={item.imageUrl}
+                                    src={resolveImageUrl(item.imageUrl)}
                                     alt="Preview"
                                     className="w-32 h-32 object-cover border-2 border-[var(--matte-black)]"
                                   />
@@ -1420,7 +1421,7 @@ export function AdminPanel({
                             <div className="flex-1">
                               {item.imageUrl && (
                                 <img
-                                  src={item.imageUrl}
+                                  src={resolveImageUrl(item.imageUrl)}
                                   alt={item.nameEn}
                                   className="w-24 h-24 object-cover border-2 border-[var(--matte-black)] mb-3"
                                 />
@@ -1612,7 +1613,7 @@ export function AdminPanel({
                           </label>
                           {newItem.imageUrl && (
                             <img
-                              src={newItem.imageUrl}
+                              src={resolveImageUrl(newItem.imageUrl)}
                               alt="Preview"
                               className="w-32 h-32 object-cover border-2 border-[var(--matte-black)]"
                             />
