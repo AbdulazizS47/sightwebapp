@@ -17,4 +17,7 @@
   <string name="orders_queue">Orders Queue</string>
   <string name="complete">Complete</string>
   <string name="no_pending_orders">No pending orders</string>
+  <string name="connection_settings">Connection</string>
+  <string name="status_overview">Status</string>
+  <string name="subtitle">Server, printer, and orders queue</string>
 </resources>
