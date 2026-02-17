@@ -20,6 +20,13 @@ object EscPos {
 
   fun cut(): ByteArray = byteArrayOf(GS, 0x56, 0x00)
 
+  // ESC B n t (beep) - n: 1-9 times, t: 1-9 duration units
+  fun buzzer(times: Int = 2, duration: Int = 2): ByteArray {
+    val n = times.coerceIn(1, 9)
+    val t = duration.coerceIn(1, 9)
+    return byteArrayOf(ESC, 0x42, n.toByte(), t.toByte())
+  }
+
   fun text(text: String): ByteArray {
     // Many printers expect CRLF line endings
     val normalized = text.replace("\n", "\r\n")

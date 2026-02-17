@@ -192,6 +192,11 @@ class PrintService : Service() {
 
   private fun printBitmapChunked(bitmap: Bitmap, maxHeight: Int = 240) {
     printer.write(EscPos.init())
+    try {
+      printer.write(EscPos.buzzer())
+    } catch (_: Exception) {
+      // Some printers ignore beep command; proceed with printing.
+    }
     printer.write(EscPos.feed(1))
     val width = bitmap.width
     val height = bitmap.height
