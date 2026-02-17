@@ -35,6 +35,7 @@ export function CartModal({
   const [error, setError] = useState('');
   const [loyalty, setLoyalty] = useState<{ enabled: boolean; stamps: number } | null>(null);
   const [redeemReward, setRedeemReward] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const paymentMethod = 'pickup' as const;
 
   const content = {
@@ -56,6 +57,10 @@ export function CartModal({
       halfOff: '50% off',
       discountCap: 'max 20 SAR',
       rewardApplied: 'Reward applied',
+      confirmTitle: 'Confirm Order',
+      confirmMessage: 'Your order will be ready within 10 minutes. Pay on pickup.',
+      confirmButton: 'Confirm Order',
+      cancelButton: 'Cancel',
     },
     ar: {
       cart: 'سلتك',
@@ -75,6 +80,10 @@ export function CartModal({
       halfOff: '50% off',
       discountCap: 'max 20 SAR',
       rewardApplied: 'Reward applied',
+      confirmTitle: 'تأكيد الطلب',
+      confirmMessage: 'سيكون طلبك جاهزًا خلال 10 دقائق. الدفع عند الاستلام.',
+      confirmButton: 'تأكيد الطلب',
+      cancelButton: 'إلغاء',
     },
   };
 
@@ -132,7 +141,7 @@ export function CartModal({
       .catch(() => {});
   }, [sessionToken]);
 
-  const handleProcessOrder = async () => {
+  const processOrder = async () => {
     if (!sessionToken) {
       onAuthRequired();
       return;
@@ -206,11 +215,52 @@ export function CartModal({
     }
   };
 
+  const handleProcessOrder = () => {
+    if (!sessionToken) {
+      onAuthRequired();
+      return;
+    }
+    if (items.length === 0) {
+      setError('Cart is empty');
+      return;
+    }
+    setError('');
+    setShowConfirm(true);
+  };
+
   return (
     <div
       className="fixed inset-0 bg-[var(--crisp-white)] z-50 overflow-y-auto"
       dir={isRTL ? 'rtl' : 'ltr'}
     >
+      {showConfirm && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-4">
+          <div className="bg-[var(--crisp-white)] border-2 border-[var(--matte-black)] max-w-sm w-full p-5">
+            <h3 className="text-lg text-[var(--matte-black)] mb-2">{text.confirmTitle}</h3>
+            <p className="text-sm text-[var(--matte-black)] opacity-80 mb-5">
+              {text.confirmMessage}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setShowConfirm(false);
+                  void processOrder();
+                }}
+                disabled={loading}
+                className="flex-1 py-2 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors text-sm"
+              >
+                {loading ? '...' : text.confirmButton}
+              </button>
+              <button
+                onClick={() => setShowConfirm(false)}
+                className="flex-1 py-2 border-2 border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--cool-gray)] transition-colors text-sm"
+              >
+                {text.cancelButton}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="sticky top-0 bg-[var(--crisp-white)] border-b border-[var(--matte-black)] z-10">
         <div className="flex items-center justify-between p-4">
