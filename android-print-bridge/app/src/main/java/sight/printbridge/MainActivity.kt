@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.media.RingtoneManager
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -148,6 +149,7 @@ class MainActivity : AppCompatActivity() {
           val renderer = ReceiptRenderer(this@MainActivity)
           val bitmap = renderer.render(sampleOrder(), loadLogo())
           printBitmap(bitmap)
+          playNotificationSound()
           setLastOrderText("Test print")
           setPrinterStatus("Test print sent")
         } catch (e: Exception) {
@@ -261,13 +263,6 @@ class MainActivity : AppCompatActivity() {
   private suspend fun printBitmap(bitmap: android.graphics.Bitmap) {
     withContext(Dispatchers.IO) {
       printer.write(EscPos.init())
-      try {
-        for (command in EscPos.buzzerSequence()) {
-          printer.write(command)
-        }
-      } catch (_: Exception) {
-        // Some printers ignore the beep command.
-      }
       printer.write(EscPos.feed(1))
       printer.write(EscPos.bitmap24(bitmap))
       printer.write(EscPos.feed(3))
@@ -322,6 +317,18 @@ class MainActivity : AppCompatActivity() {
       lastQueueJson = queueJson
       updateQueue(OrderQueue.fromJson(queueJson))
     }
+  }
+
+  private fun playNotificationSound(durationMs: Long = 3000L) {
+    val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION) ?: return
+    val ringtone = RingtoneManager.getRingtone(this, uri) ?: return
+    ringtone.play()
+    Handler(Looper.getMainLooper()).postDelayed({
+      try {
+        ringtone.stop()
+      } catch (_: Exception) {
+      }
+    }, durationMs)
   }
 
   private fun updateQueue(queue: List<QueueOrder>) {

@@ -10,7 +10,10 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.IBinder
+import android.os.Looper
+import android.os.Handler
 import android.util.Log
+import android.media.RingtoneManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -108,11 +111,11 @@ class PrintService : Service() {
           if (job != null) {
             setServerStatus("Job claimed")
             setLastOrder(job.order.orderNumber)
-            updateNotification("Printing ${job.order.orderNumber}")
+              updateNotification("Printing ${job.order.orderNumber}")
             try {
               OrderQueue.add(prefs, job.order)
+              playNotificationSound()
               ensureConnected(printerAddress)
-              beepForNewOrder(printerAddress)
               val bitmap = renderer.render(job.order, logo)
               if (!bitmapHasInk(bitmap)) {
                 throw IllegalStateException("Rendered bitmap is blank")
@@ -229,25 +232,17 @@ class PrintService : Service() {
       msg.contains("connection reset")
   }
 
-  private suspend fun beepForNewOrder(printerAddress: String) {
-    try {
-      ensureConnected(printerAddress)
-    } catch (e: Exception) {
-      logError("Beep failed: connect error", e)
-      return
-    }
-    val endTime = System.currentTimeMillis() + 3000L
-    while (System.currentTimeMillis() < endTime) {
+  private fun playNotificationSound(durationMs: Long = 3000L) {
+    val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION) ?: return
+    val ringtone = RingtoneManager.getRingtone(this, uri) ?: return
+    val handler = Handler(Looper.getMainLooper())
+    handler.post { ringtone.play() }
+    handler.postDelayed({
       try {
-        for (command in EscPos.buzzerSequence()) {
-          printer.write(command)
-        }
-      } catch (e: Exception) {
-        logError("Beep command failed", e)
-        return
+        ringtone.stop()
+      } catch (_: Exception) {
       }
-      delay(350)
-    }
+    }, durationMs)
   }
 
   private fun buildNotification(text: String): Notification {
