@@ -249,6 +249,11 @@ class MainActivity : AppCompatActivity() {
   private suspend fun printBitmap(bitmap: android.graphics.Bitmap) {
     withContext(Dispatchers.IO) {
       printer.write(EscPos.init())
+      try {
+        printer.write(EscPos.buzzer())
+      } catch (_: Exception) {
+        // Some printers ignore the beep command.
+      }
       printer.write(EscPos.feed(1))
       printer.write(EscPos.bitmap24(bitmap))
       printer.write(EscPos.feed(3))
