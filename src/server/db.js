@@ -208,6 +208,14 @@ export async function initSchema() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      \`key\` VARCHAR(64) PRIMARY KEY,
+      \`value\` TEXT NOT NULL,
+      updatedAt BIGINT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
   // Best-effort indexes (ignore if already present)
   const ensureIndex = async (sql) => {
     try {

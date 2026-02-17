@@ -1,5 +1,7 @@
 import { motion } from 'motion/react';
+import { useEffect, useState } from 'react';
 import logoImage from 'figma:asset/6a698afc3834913c1c2ac422fa5bd04b815dc28c.png';
+import { apiBaseUrl } from '../utils/supabase/info';
 
 interface LandingPageProps {
   onNavigate: (...args: ['menu' | 'contact']) => void;
@@ -9,6 +11,10 @@ interface LandingPageProps {
 }
 
 export function LandingPage({ onNavigate, onAdminNavigate, isAdmin, language }: LandingPageProps) {
+  const [openStatus, setOpenStatus] = useState(true);
+  const [hoursEn, setHoursEn] = useState('Daily: 4:00 PM - 2:00 AM');
+  const [hoursAr, setHoursAr] = useState('يوميًا: ٤:٠٠ مساءً - ٢:٠٠ صباحًا');
+
   const content = {
     en: {
       header: 'SIGHT',
@@ -24,6 +30,8 @@ export function LandingPage({ onNavigate, onAdminNavigate, isAdmin, language }: 
       contact: 'Contact Us',
       adminEdit: 'Edit Items',
       adminOrder: 'Register Orders',
+      openNow: 'Open now',
+      closed: 'Closed',
     },
     ar: {
       header: 'سايت',
@@ -39,11 +47,30 @@ export function LandingPage({ onNavigate, onAdminNavigate, isAdmin, language }: 
       contact: 'اتصل بنا',
       adminEdit: 'تعديل الأصناف',
       adminOrder: 'تسجيل الطلبات',
+      openNow: 'مفتوح الآن',
+      closed: 'مغلق',
     },
   };
 
   const text = content[language];
   const isRTL = language === 'ar';
+  const hoursText = language === 'ar' ? hoursAr : hoursEn;
+
+  useEffect(() => {
+    let mounted = true;
+    fetch(`${apiBaseUrl}/settings/public`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!mounted || !data?.success) return;
+        if (typeof data.isOpen === 'boolean') setOpenStatus(data.isOpen);
+        if (data?.hours?.en) setHoursEn(String(data.hours.en));
+        if (data?.hours?.ar) setHoursAr(String(data.hours.ar));
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   return (
     <div
@@ -73,6 +100,26 @@ export function LandingPage({ onNavigate, onAdminNavigate, isAdmin, language }: 
         >
           {text.tagline}
         </motion.p>
+
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.25, ease: 'easeOut' }}
+          className="mb-8 flex items-center gap-2 text-[var(--matte-black)] opacity-80 text-sm"
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 999,
+              display: 'inline-block',
+              backgroundColor: openStatus ? '#16a34a' : '#9ca3af',
+            }}
+          />
+          <span>
+            {openStatus ? text.openNow : text.closed} • {hoursText}
+          </span>
+        </motion.div>
 
         {/* CTA Buttons */}
         <motion.div

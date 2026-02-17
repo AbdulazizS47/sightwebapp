@@ -52,6 +52,10 @@ const SMS_PROVIDER = (process.env.SMS_PROVIDER || 'console').trim().toLowerCase(
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || process.env.UPLOADS_BASE_URL || '')
   .trim()
   .replace(/\/+$/, '');
+const DEFAULT_OPEN_STATUS = (process.env.OPEN_STATUS_DEFAULT || 'true').trim().toLowerCase() !== 'false';
+const DEFAULT_HOURS_EN = (process.env.DEFAULT_HOURS_EN || 'Daily: 4:00 PM - 2:00 AM').trim();
+const DEFAULT_HOURS_AR =
+  (process.env.DEFAULT_HOURS_AR || 'يوميًا: ٤:٠٠ مساءً - ٢:٠٠ صباحًا').trim();
 const PRINT_JOB_STALE_MS = Math.max(
   Number(process.env.PRINT_JOB_STALE_MS || 2 * 60 * 1000) || 2 * 60 * 1000,
   30 * 1000
@@ -191,6 +195,27 @@ function getPublicBaseUrl(c) {
   return new URL(c.req.url).origin;
 }
 
+async function getSetting(key, fallback) {
+  try {
+    const [rows] = await pool.execute('SELECT value FROM app_settings WHERE `key` = ? LIMIT 1', [
+      key,
+    ]);
+    const row = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    if (!row || row.value == null) return fallback;
+    return String(row.value);
+  } catch (e) {
+    console.error('Failed to read setting', key, e);
+    return fallback;
+  }
+}
+
+async function setSetting(key, value) {
+  await pool.execute(
+    'INSERT INTO app_settings (`key`, `value`, updatedAt) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE `value`=VALUES(`value`), updatedAt=VALUES(updatedAt)',
+    [key, String(value), Date.now()]
+  );
+}
+
 // Initialize DB schema
 await ensureDatabase();
 await initSchema();
@@ -261,6 +286,22 @@ app.get('/api/health', async (c) => {
   return c.json(payload);
 });
 app.get('/', (c) => c.text('OK'));
+
+// Public settings (open status + hours)
+app.get('/api/settings/public', async (c) => {
+  const openRaw = await getSetting('openStatus', DEFAULT_OPEN_STATUS ? 'true' : 'false');
+  const hoursEn = await getSetting('hoursEn', DEFAULT_HOURS_EN);
+  const hoursAr = await getSetting('hoursAr', DEFAULT_HOURS_AR);
+  const isOpen = String(openRaw).trim().toLowerCase() === 'true';
+  return c.json({
+    success: true,
+    isOpen,
+    hours: {
+      en: hoursEn || DEFAULT_HOURS_EN,
+      ar: hoursAr || DEFAULT_HOURS_AR,
+    },
+  });
+});
 
 // Demo Auth Endpoints
 app.post('/api/auth/send-otp', async (c) => {
@@ -626,6 +667,34 @@ app.get('/api/admin/menu', async (c) => {
   } catch (e) {
     console.error('Error fetching admin menu', e);
     return c.json({ error: 'Failed to fetch admin menu' }, 500);
+  }
+});
+
+// Admin settings: update open status + hours
+app.post('/api/admin/settings/open-status', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const isOpen = Boolean(body?.isOpen);
+    const hoursEn = typeof body?.hoursEn === 'string' ? body.hoursEn.trim() : '';
+    const hoursAr = typeof body?.hoursAr === 'string' ? body.hoursAr.trim() : '';
+
+    await setSetting('openStatus', isOpen ? 'true' : 'false');
+    await setSetting('hoursEn', hoursEn || DEFAULT_HOURS_EN);
+    await setSetting('hoursAr', hoursAr || DEFAULT_HOURS_AR);
+
+    return c.json({
+      success: true,
+      isOpen,
+      hours: {
+        en: hoursEn || DEFAULT_HOURS_EN,
+        ar: hoursAr || DEFAULT_HOURS_AR,
+      },
+    });
+  } catch (e) {
+    console.error('Error updating open status', e);
+    return c.json({ error: 'Failed to update settings' }, 500);
   }
 });
 app.post('/api/admin/reset-menu', async (c) => {

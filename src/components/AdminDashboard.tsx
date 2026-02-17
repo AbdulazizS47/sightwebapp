@@ -9,7 +9,7 @@ interface AdminDashboardProps {
   language: 'en' | 'ar';
 }
 
-type Tab = 'live-orders' | 'history' | 'menu' | 'customers';
+type Tab = 'live-orders' | 'history' | 'menu' | 'customers' | 'settings';
 
 interface CustomerSummary {
   customerKey?: string | null;
@@ -41,7 +41,13 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
         // Backward compatibility: old routes used "orders"
         const normalized = parts[1] === 'orders' ? 'live-orders' : parts[1];
         const tab = normalized as Tab;
-        if (tab === 'live-orders' || tab === 'history' || tab === 'menu' || tab === 'customers') {
+        if (
+          tab === 'live-orders' ||
+          tab === 'history' ||
+          tab === 'menu' ||
+          tab === 'customers' ||
+          tab === 'settings'
+        ) {
           setActiveTab(tab);
         }
       }
@@ -61,6 +67,10 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
   const [customers, setCustomers] = useState<CustomerSummary[]>([]);
   const [customerQuery, setCustomerQuery] = useState('');
   const [stats, setStats] = useState<OrderStats | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [isOpenSetting, setIsOpenSetting] = useState(true);
+  const [hoursEnSetting, setHoursEnSetting] = useState('Daily: 4:00 PM - 2:00 AM');
+  const [hoursArSetting, setHoursArSetting] = useState('يوميًا: ٤:٠٠ مساءً - ٢:٠٠ صباحًا');
 
   const content = {
     en: {
@@ -69,8 +79,15 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       historyTab: 'Order History',
       menuTab: 'Menu',
       customersTab: 'Customers',
+      settingsTab: 'Settings',
       refresh: 'Refresh',
       cleanupDemo: 'Remove Demo Items',
+      openStatus: 'Open Status',
+      openNow: 'Open now',
+      closed: 'Closed',
+      hoursEn: 'Hours (EN)',
+      hoursAr: 'Hours (AR)',
+      save: 'Save',
       liveNow: 'Live now',
       preparing: 'Preparing',
       ready: 'Ready',
@@ -97,8 +114,15 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       historyTab: 'سجل الطلبات',
       menuTab: 'القائمة',
       customersTab: 'العملاء',
+      settingsTab: 'الإعدادات',
       refresh: 'تحديث',
       cleanupDemo: 'حذف العناصر التجريبية',
+      openStatus: 'حالة المتجر',
+      openNow: 'مفتوح الآن',
+      closed: 'مغلق',
+      hoursEn: 'ساعات العمل (EN)',
+      hoursAr: 'ساعات العمل (AR)',
+      save: 'حفظ',
       liveNow: 'الطلبات الآن',
       preparing: 'قيد التحضير',
       ready: 'جاهز',
@@ -143,6 +167,23 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
     }
   };
 
+  const loadSettings = async () => {
+    setSettingsLoading(true);
+    try {
+      const res = await fetch(`${apiBaseUrl}/settings/public`);
+      const data = await res.json();
+      if (data?.success) {
+        setIsOpenSetting(Boolean(data.isOpen));
+        setHoursEnSetting(String(data?.hours?.en || ''));
+        setHoursArSetting(String(data?.hours?.ar || ''));
+      }
+    } catch (e) {
+      console.error('Error loading settings', e);
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
   const loadStats = async () => {
     try {
       const res = await fetch(`${apiBaseUrl}/admin/orders/stats`, {
@@ -159,6 +200,12 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
   useEffect(() => {
     if (activeTab === 'customers') {
       loadCustomers();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'settings') {
+      loadSettings();
     }
   }, [activeTab]);
 
@@ -327,6 +374,12 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
           >
             <Users size={16} /> {text.customersTab}
           </button>
+          <button
+            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 ${activeTab === 'settings' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
+            onClick={() => setTab('settings')}
+          >
+            {text.settingsTab}
+          </button>
         </div>
       </div>
 
@@ -465,6 +518,94 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
                 </table>
               </div>
             )}
+          </div>
+        )}
+        {activeTab === 'settings' && (
+          <div className="max-w-xl">
+            <div className="border-2 border-[var(--matte-black)] p-4 bg-[var(--crisp-white)] space-y-4">
+              <div>
+                <div className="text-sm text-[var(--matte-black)] opacity-70 mb-2">
+                  {text.openStatus}
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={isOpenSetting}
+                    onChange={(e) => setIsOpenSetting(e.target.checked)}
+                  />
+                  <span>{isOpenSetting ? text.openNow : text.closed}</span>
+                </label>
+              </div>
+
+              <div>
+                <label className="text-sm text-[var(--matte-black)] opacity-70">
+                  {text.hoursEn}
+                </label>
+                <input
+                  type="text"
+                  value={hoursEnSetting}
+                  onChange={(e) => setHoursEnSetting(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 border-2 border-[var(--matte-black)] text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="text-sm text-[var(--matte-black)] opacity-70">
+                  {text.hoursAr}
+                </label>
+                <input
+                  type="text"
+                  value={hoursArSetting}
+                  onChange={(e) => setHoursArSetting(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 border-2 border-[var(--matte-black)] text-sm"
+                  dir="rtl"
+                />
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={async () => {
+                    setSettingsLoading(true);
+                    try {
+                      const res = await fetch(`${apiBaseUrl}/admin/settings/open-status`, {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          Authorization: `Bearer ${sessionToken}`,
+                        },
+                        body: JSON.stringify({
+                          isOpen: isOpenSetting,
+                          hoursEn: hoursEnSetting,
+                          hoursAr: hoursArSetting,
+                        }),
+                      });
+                      const data = await res.json();
+                      if (data.success) {
+                        alert(language === 'en' ? 'Settings saved' : 'تم حفظ الإعدادات');
+                      } else {
+                        alert('Failed to save: ' + (data.error || 'Unknown error'));
+                      }
+                    } catch (e) {
+                      console.error('Error saving settings', e);
+                      alert(language === 'en' ? 'Error saving settings' : 'حدث خطأ أثناء الحفظ');
+                    } finally {
+                      setSettingsLoading(false);
+                    }
+                  }}
+                  disabled={settingsLoading}
+                  className="px-4 py-2 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors text-sm"
+                >
+                  {settingsLoading ? '...' : text.save}
+                </button>
+                <button
+                  onClick={loadSettings}
+                  disabled={settingsLoading}
+                  className="px-4 py-2 border-2 border-[var(--matte-black)] text-sm hover:bg-[var(--cool-gray)] transition-colors"
+                >
+                  {text.refresh}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
