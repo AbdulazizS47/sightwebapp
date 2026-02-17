@@ -69,8 +69,13 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
   const [stats, setStats] = useState<OrderStats | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [isOpenSetting, setIsOpenSetting] = useState(true);
+  const [computedOpenSetting, setComputedOpenSetting] = useState(true);
   const [hoursEnSetting, setHoursEnSetting] = useState('Daily: 4:00 PM - 2:00 AM');
   const [hoursArSetting, setHoursArSetting] = useState('يوميًا: ٤:٠٠ مساءً - ٢:٠٠ صباحًا');
+  const [scheduleEnabledSetting, setScheduleEnabledSetting] = useState(true);
+  const [hoursStartSetting, setHoursStartSetting] = useState('16:00');
+  const [hoursEndSetting, setHoursEndSetting] = useState('02:00');
+  const [timeZoneSetting, setTimeZoneSetting] = useState('Asia/Riyadh');
 
   const content = {
     en: {
@@ -83,10 +88,17 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       refresh: 'Refresh',
       cleanupDemo: 'Remove Demo Items',
       openStatus: 'Open Status',
+      currentStatus: 'Current status',
+      scheduleMode: 'Open Hours Schedule',
+      scheduleAuto: 'Auto (based on hours)',
+      scheduleManual: 'Manual (override)',
       openNow: 'Open now',
       closed: 'Closed',
       hoursEn: 'Hours (EN)',
       hoursAr: 'Hours (AR)',
+      hoursStart: 'Opens at (24h)',
+      hoursEnd: 'Closes at (24h)',
+      timeZone: 'Time zone',
       save: 'Save',
       liveNow: 'Live now',
       preparing: 'Preparing',
@@ -118,10 +130,17 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       refresh: 'تحديث',
       cleanupDemo: 'حذف العناصر التجريبية',
       openStatus: 'حالة المتجر',
+      currentStatus: 'الحالة الحالية',
+      scheduleMode: 'جدول ساعات العمل',
+      scheduleAuto: 'تلقائي حسب الساعات',
+      scheduleManual: 'يدوي (تجاوز)',
       openNow: 'مفتوح الآن',
       closed: 'مغلق',
       hoursEn: 'ساعات العمل (EN)',
       hoursAr: 'ساعات العمل (AR)',
+      hoursStart: 'يفتح عند (24h)',
+      hoursEnd: 'يغلق عند (24h)',
+      timeZone: 'المنطقة الزمنية',
       save: 'حفظ',
       liveNow: 'الطلبات الآن',
       preparing: 'قيد التحضير',
@@ -173,9 +192,18 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       const res = await fetch(`${apiBaseUrl}/settings/public`);
       const data = await res.json();
       if (data?.success) {
-        setIsOpenSetting(Boolean(data.isOpen));
+        const manualOpen =
+          typeof data.manualOpen === 'boolean' ? data.manualOpen : Boolean(data.isOpen);
+        setIsOpenSetting(manualOpen);
+        setComputedOpenSetting(Boolean(data.isOpen));
         setHoursEnSetting(String(data?.hours?.en || ''));
         setHoursArSetting(String(data?.hours?.ar || ''));
+        setScheduleEnabledSetting(
+          typeof data?.schedule?.enabled === 'boolean' ? data.schedule.enabled : true
+        );
+        setHoursStartSetting(String(data?.schedule?.start || '16:00'));
+        setHoursEndSetting(String(data?.schedule?.end || '02:00'));
+        setTimeZoneSetting(String(data?.schedule?.timeZone || 'Asia/Riyadh'));
       }
     } catch (e) {
       console.error('Error loading settings', e);
@@ -525,6 +553,25 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
             <div className="border-2 border-[var(--matte-black)] p-4 bg-[var(--crisp-white)] space-y-4">
               <div>
                 <div className="text-sm text-[var(--matte-black)] opacity-70 mb-2">
+                  {text.scheduleMode}
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={scheduleEnabledSetting}
+                    onChange={(e) => setScheduleEnabledSetting(e.target.checked)}
+                  />
+                  <span>
+                    {scheduleEnabledSetting ? text.scheduleAuto : text.scheduleManual}
+                  </span>
+                </label>
+                <div className="mt-2 text-xs text-[var(--matte-black)] opacity-60">
+                  {text.currentStatus}: {computedOpenSetting ? text.openNow : text.closed}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-sm text-[var(--matte-black)] opacity-70 mb-2">
                   {text.openStatus}
                 </div>
                 <label className="flex items-center gap-2 text-sm">
@@ -532,9 +579,50 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
                     type="checkbox"
                     checked={isOpenSetting}
                     onChange={(e) => setIsOpenSetting(e.target.checked)}
+                    disabled={scheduleEnabledSetting}
                   />
                   <span>{isOpenSetting ? text.openNow : text.closed}</span>
                 </label>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm text-[var(--matte-black)] opacity-70">
+                    {text.hoursStart}
+                  </label>
+                  <input
+                    type="text"
+                    value={hoursStartSetting}
+                    onChange={(e) => setHoursStartSetting(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border-2 border-[var(--matte-black)] text-sm"
+                    placeholder="16:00"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-[var(--matte-black)] opacity-70">
+                    {text.hoursEnd}
+                  </label>
+                  <input
+                    type="text"
+                    value={hoursEndSetting}
+                    onChange={(e) => setHoursEndSetting(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border-2 border-[var(--matte-black)] text-sm"
+                    placeholder="02:00"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm text-[var(--matte-black)] opacity-70">
+                  {text.timeZone}
+                </label>
+                <input
+                  type="text"
+                  value={timeZoneSetting}
+                  onChange={(e) => setTimeZoneSetting(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 border-2 border-[var(--matte-black)] text-sm"
+                  placeholder="Asia/Riyadh"
+                />
               </div>
 
               <div>
@@ -577,10 +665,34 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
                           isOpen: isOpenSetting,
                           hoursEn: hoursEnSetting,
                           hoursAr: hoursArSetting,
+                          scheduleEnabled: scheduleEnabledSetting,
+                          hoursStart: hoursStartSetting,
+                          hoursEnd: hoursEndSetting,
+                          timeZone: timeZoneSetting,
                         }),
                       });
                       const data = await res.json();
                       if (data.success) {
+                        if (typeof data.isOpen === 'boolean') {
+                          setComputedOpenSetting(Boolean(data.isOpen));
+                        }
+                        if (typeof data.manualOpen === 'boolean') {
+                          setIsOpenSetting(Boolean(data.manualOpen));
+                        }
+                        if (data?.schedule) {
+                          if (typeof data.schedule.enabled === 'boolean') {
+                            setScheduleEnabledSetting(Boolean(data.schedule.enabled));
+                          }
+                          if (data.schedule.start) {
+                            setHoursStartSetting(String(data.schedule.start));
+                          }
+                          if (data.schedule.end) {
+                            setHoursEndSetting(String(data.schedule.end));
+                          }
+                          if (data.schedule.timeZone) {
+                            setTimeZoneSetting(String(data.schedule.timeZone));
+                          }
+                        }
                         alert(language === 'en' ? 'Settings saved' : 'تم حفظ الإعدادات');
                       } else {
                         alert('Failed to save: ' + (data.error || 'Unknown error'));

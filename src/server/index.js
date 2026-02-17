@@ -56,6 +56,11 @@ const DEFAULT_OPEN_STATUS = (process.env.OPEN_STATUS_DEFAULT || 'true').trim().t
 const DEFAULT_HOURS_EN = (process.env.DEFAULT_HOURS_EN || 'Daily: 4:00 PM - 2:00 AM').trim();
 const DEFAULT_HOURS_AR =
   (process.env.DEFAULT_HOURS_AR || 'يوميًا: ٤:٠٠ مساءً - ٢:٠٠ صباحًا').trim();
+const DEFAULT_HOURS_START = (process.env.DEFAULT_HOURS_START || '16:00').trim();
+const DEFAULT_HOURS_END = (process.env.DEFAULT_HOURS_END || '02:00').trim();
+const DEFAULT_TIMEZONE = (process.env.DEFAULT_TIMEZONE || 'Asia/Riyadh').trim();
+const DEFAULT_SCHEDULE_ENABLED =
+  (process.env.DEFAULT_SCHEDULE_ENABLED || 'true').trim().toLowerCase() !== 'false';
 const PRINT_JOB_STALE_MS = Math.max(
   Number(process.env.PRINT_JOB_STALE_MS || 2 * 60 * 1000) || 2 * 60 * 1000,
   30 * 1000
@@ -150,6 +155,45 @@ async function getSessionUser(token) {
     console.error('Failed to load session from DB', e);
     return null;
   }
+}
+
+function parseTimeToMinutes(raw) {
+  const cleaned = String(raw || '').trim();
+  const match = /^(\d{1,2}):(\d{2})$/.exec(cleaned);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function getMinutesInTimeZone(date, timeZone) {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(date);
+    const hour = Number(parts.find((p) => p.type === 'hour')?.value);
+    const minute = Number(parts.find((p) => p.type === 'minute')?.value);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+    return hour * 60 + minute;
+  } catch {
+    return null;
+  }
+}
+
+function isOpenForSchedule(now, start, end, timeZone) {
+  const startMin = parseTimeToMinutes(start);
+  const endMin = parseTimeToMinutes(end);
+  const nowMin = getMinutesInTimeZone(now, timeZone);
+  if (startMin == null || endMin == null || nowMin == null) return null;
+  if (startMin === endMin) return true;
+  if (startMin < endMin) return nowMin >= startMin && nowMin < endMin;
+  return nowMin >= startMin || nowMin < endMin;
 }
 
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
@@ -292,10 +336,29 @@ app.get('/api/settings/public', async (c) => {
   const openRaw = await getSetting('openStatus', DEFAULT_OPEN_STATUS ? 'true' : 'false');
   const hoursEn = await getSetting('hoursEn', DEFAULT_HOURS_EN);
   const hoursAr = await getSetting('hoursAr', DEFAULT_HOURS_AR);
-  const isOpen = String(openRaw).trim().toLowerCase() === 'true';
+  const scheduleEnabledRaw = await getSetting(
+    'scheduleEnabled',
+    DEFAULT_SCHEDULE_ENABLED ? 'true' : 'false'
+  );
+  const hoursStart = await getSetting('hoursStart', DEFAULT_HOURS_START);
+  const hoursEnd = await getSetting('hoursEnd', DEFAULT_HOURS_END);
+  const timeZone = await getSetting('timeZone', DEFAULT_TIMEZONE);
+  const manualOpen = String(openRaw).trim().toLowerCase() === 'true';
+  const scheduleEnabled = String(scheduleEnabledRaw).trim().toLowerCase() === 'true';
+  const computedOpen = scheduleEnabled
+    ? isOpenForSchedule(new Date(), hoursStart, hoursEnd, timeZone)
+    : manualOpen;
+  const isOpen = typeof computedOpen === 'boolean' ? computedOpen : manualOpen;
   return c.json({
     success: true,
     isOpen,
+    manualOpen,
+    schedule: {
+      enabled: scheduleEnabled,
+      start: hoursStart || DEFAULT_HOURS_START,
+      end: hoursEnd || DEFAULT_HOURS_END,
+      timeZone: timeZone || DEFAULT_TIMEZONE,
+    },
     hours: {
       en: hoursEn || DEFAULT_HOURS_EN,
       ar: hoursAr || DEFAULT_HOURS_AR,
@@ -679,14 +742,55 @@ app.post('/api/admin/settings/open-status', async (c) => {
     const isOpen = Boolean(body?.isOpen);
     const hoursEn = typeof body?.hoursEn === 'string' ? body.hoursEn.trim() : '';
     const hoursAr = typeof body?.hoursAr === 'string' ? body.hoursAr.trim() : '';
+    const scheduleEnabled =
+      typeof body?.scheduleEnabled === 'boolean' ? body.scheduleEnabled : null;
+    const hoursStart = typeof body?.hoursStart === 'string' ? body.hoursStart.trim() : null;
+    const hoursEnd = typeof body?.hoursEnd === 'string' ? body.hoursEnd.trim() : null;
+    const timeZone = typeof body?.timeZone === 'string' ? body.timeZone.trim() : null;
 
     await setSetting('openStatus', isOpen ? 'true' : 'false');
     await setSetting('hoursEn', hoursEn || DEFAULT_HOURS_EN);
     await setSetting('hoursAr', hoursAr || DEFAULT_HOURS_AR);
+    if (scheduleEnabled !== null) {
+      await setSetting('scheduleEnabled', scheduleEnabled ? 'true' : 'false');
+    }
+    if (hoursStart !== null) {
+      await setSetting('hoursStart', hoursStart || DEFAULT_HOURS_START);
+    }
+    if (hoursEnd !== null) {
+      await setSetting('hoursEnd', hoursEnd || DEFAULT_HOURS_END);
+    }
+    if (timeZone !== null) {
+      await setSetting('timeZone', timeZone || DEFAULT_TIMEZONE);
+    }
+
+    const effectiveScheduleEnabled =
+      scheduleEnabled !== null
+        ? scheduleEnabled
+        : String(await getSetting('scheduleEnabled', DEFAULT_SCHEDULE_ENABLED ? 'true' : 'false'))
+            .trim()
+            .toLowerCase() === 'true';
+    const effectiveHoursStart =
+      hoursStart !== null ? hoursStart || DEFAULT_HOURS_START : await getSetting('hoursStart', DEFAULT_HOURS_START);
+    const effectiveHoursEnd =
+      hoursEnd !== null ? hoursEnd || DEFAULT_HOURS_END : await getSetting('hoursEnd', DEFAULT_HOURS_END);
+    const effectiveTimeZone =
+      timeZone !== null ? timeZone || DEFAULT_TIMEZONE : await getSetting('timeZone', DEFAULT_TIMEZONE);
+    const computedOpen = effectiveScheduleEnabled
+      ? isOpenForSchedule(new Date(), effectiveHoursStart, effectiveHoursEnd, effectiveTimeZone)
+      : isOpen;
+    const isOpenEffective = typeof computedOpen === 'boolean' ? computedOpen : isOpen;
 
     return c.json({
       success: true,
-      isOpen,
+      isOpen: isOpenEffective,
+      manualOpen: isOpen,
+      schedule: {
+        enabled: effectiveScheduleEnabled,
+        start: effectiveHoursStart || DEFAULT_HOURS_START,
+        end: effectiveHoursEnd || DEFAULT_HOURS_END,
+        timeZone: effectiveTimeZone || DEFAULT_TIMEZONE,
+      },
       hours: {
         en: hoursEn || DEFAULT_HOURS_EN,
         ar: hoursAr || DEFAULT_HOURS_AR,

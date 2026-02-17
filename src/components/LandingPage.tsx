@@ -58,17 +58,22 @@ export function LandingPage({ onNavigate, onAdminNavigate, isAdmin, language }: 
 
   useEffect(() => {
     let mounted = true;
-    fetch(`${apiBaseUrl}/settings/public`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (!mounted || !data?.success) return;
-        if (typeof data.isOpen === 'boolean') setOpenStatus(data.isOpen);
-        if (data?.hours?.en) setHoursEn(String(data.hours.en));
-        if (data?.hours?.ar) setHoursAr(String(data.hours.ar));
-      })
-      .catch(() => {});
+    const loadSettings = () => {
+      fetch(`${apiBaseUrl}/settings/public`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (!mounted || !data?.success) return;
+          if (typeof data.isOpen === 'boolean') setOpenStatus(data.isOpen);
+          if (data?.hours?.en) setHoursEn(String(data.hours.en));
+          if (data?.hours?.ar) setHoursAr(String(data.hours.ar));
+        })
+        .catch(() => {});
+    };
+    loadSettings();
+    const interval = window.setInterval(loadSettings, 60000);
     return () => {
       mounted = false;
+      window.clearInterval(interval);
     };
   }, []);
 
