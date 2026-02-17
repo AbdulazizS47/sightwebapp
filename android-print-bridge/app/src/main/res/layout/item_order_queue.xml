@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+  xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="match_parent"
+  android:layout_height="wrap_content"
+  android:orientation="vertical"
+  android:padding="12dp"
+  android:layout_marginBottom="10dp"
+  android:background="@drawable/queue_item_bg">
+
+  <TextView
+    android:id="@+id/orderTitle"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:textStyle="bold"
+    android:textSize="14sp"
+    android:text="Order"/>
+
+  <TextView
+    android:id="@+id/orderItems"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="6dp"
+    android:textSize="13sp"
+    android:maxLines="2"
+    android:ellipsize="end"
+    android:text="Items"/>
+
+  <TextView
+    android:id="@+id/orderTotal"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="6dp"
+    android:textSize="13sp"
+    android:text="Total"/>
+
+  <Button
+    android:id="@+id/completeButton"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="8dp"
+    android:text="@string/complete"/>
+</LinearLayout>

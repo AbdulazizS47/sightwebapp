@@ -9,4 +9,5 @@ object StatusKeys {
   const val LAST_ORDER_AT = "lastOrderAt"
   const val LAST_ERROR = "lastError"
   const val LAST_ERROR_AT = "lastErrorAt"
+  const val QUEUE_JSON = "orderQueueJson"
 }

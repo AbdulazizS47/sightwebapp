@@ -110,7 +110,9 @@ class PrintService : Service() {
             setLastOrder(job.order.orderNumber)
             updateNotification("Printing ${job.order.orderNumber}")
             try {
+              OrderQueue.add(prefs, job.order)
               ensureConnected(printerAddress)
+              beepForNewOrder(printerAddress)
               val bitmap = renderer.render(job.order, logo)
               if (!bitmapHasInk(bitmap)) {
                 throw IllegalStateException("Rendered bitmap is blank")
@@ -119,7 +121,7 @@ class PrintService : Service() {
                 "Printing ${job.order.orderNumber} (${bitmap.width}x${bitmap.height})"
               )
               withContext(Dispatchers.IO) {
-                printBitmapSafe(bitmap, printerAddress)
+                printBitmapSafe(bitmap, printerAddress, beep = false)
               }
               ackWithRetry(client, job.id)
               setPrinterStatus("Printed ${job.order.orderNumber}")
@@ -171,9 +173,9 @@ class PrintService : Service() {
     setPrinterStatus("Connected: ${device.name}")
   }
 
-  private fun printBitmapSafe(bitmap: Bitmap, printerAddress: String) {
+  private fun printBitmapSafe(bitmap: Bitmap, printerAddress: String, beep: Boolean) {
     try {
-      printBitmapChunked(bitmap)
+      printBitmapChunked(bitmap, beep = beep)
     } catch (e: Exception) {
       if (isPipeBroken(e)) {
         logError("Pipe broken, reconnecting printer", e)
@@ -183,21 +185,23 @@ class PrintService : Service() {
         } catch (_: InterruptedException) {
         }
         ensureConnected(printerAddress)
-        printBitmapChunked(bitmap)
+        printBitmapChunked(bitmap, beep = beep)
       } else {
         throw e
       }
     }
   }
 
-  private fun printBitmapChunked(bitmap: Bitmap, maxHeight: Int = 240) {
+  private fun printBitmapChunked(bitmap: Bitmap, maxHeight: Int = 240, beep: Boolean = true) {
     printer.write(EscPos.init())
-    try {
-      for (command in EscPos.buzzerSequence()) {
-        printer.write(command)
+    if (beep) {
+      try {
+        for (command in EscPos.buzzerSequence()) {
+          printer.write(command)
+        }
+      } catch (_: Exception) {
+        // Some printers ignore beep command; proceed with printing.
       }
-    } catch (_: Exception) {
-      // Some printers ignore beep command; proceed with printing.
     }
     printer.write(EscPos.feed(1))
     val width = bitmap.width
@@ -223,6 +227,27 @@ class PrintService : Service() {
       msg.contains("stream closed") ||
       msg.contains("socket") ||
       msg.contains("connection reset")
+  }
+
+  private suspend fun beepForNewOrder(printerAddress: String) {
+    try {
+      ensureConnected(printerAddress)
+    } catch (e: Exception) {
+      logError("Beep failed: connect error", e)
+      return
+    }
+    val endTime = System.currentTimeMillis() + 3000L
+    while (System.currentTimeMillis() < endTime) {
+      try {
+        for (command in EscPos.buzzerSequence()) {
+          printer.write(command)
+        }
+      } catch (e: Exception) {
+        logError("Beep command failed", e)
+        return
+      }
+      delay(350)
+    }
   }
 
   private fun buildNotification(text: String): Notification {

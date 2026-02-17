@@ -9,9 +9,11 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.recyclerview.widget.LinearLayoutManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -33,6 +35,8 @@ class MainActivity : AppCompatActivity() {
   }
   private val fixedServerUrl = "https://api.sightcoffeespace.com"
   private val fixedDeviceKey = "1234"
+  private lateinit var queueAdapter: OrderQueueAdapter
+  private var lastQueueJson: String? = null
 
   private val prefs by lazy { getSharedPreferences(StatusKeys.PREFS, MODE_PRIVATE) }
 
@@ -54,6 +58,14 @@ class MainActivity : AppCompatActivity() {
     setPrinterStatus(prefs.getString(StatusKeys.PRINTER_STATUS, "-") ?: "-")
     setLastOrderText(prefs.getString(StatusKeys.LAST_ORDER, "-") ?: "-")
     setErrorText(prefs.getString(StatusKeys.LAST_ERROR, "-") ?: "-")
+
+    queueAdapter = OrderQueueAdapter { item ->
+      val updated = OrderQueue.remove(prefs, item.id)
+      updateQueue(updated)
+    }
+    binding.queueList.layoutManager = LinearLayoutManager(this)
+    binding.queueList.adapter = queueAdapter
+    updateQueue(OrderQueue.load(prefs))
 
     ensureRuntimePermissions()
     loadPairedPrinters()
@@ -305,6 +317,23 @@ class MainActivity : AppCompatActivity() {
     binding.serviceStatusText.text = service
     binding.lastOrderText.text = lastOrder
     binding.errorText.text = lastError
+    val queueJson = prefs.getString(StatusKeys.QUEUE_JSON, "[]") ?: "[]"
+    if (queueJson != lastQueueJson) {
+      lastQueueJson = queueJson
+      updateQueue(OrderQueue.fromJson(queueJson))
+    }
+  }
+
+  private fun updateQueue(queue: List<QueueOrder>) {
+    queueAdapter.setItems(queue)
+    binding.queueLabel.text = getString(R.string.orders_queue) + " (${queue.size})"
+    if (queue.isEmpty()) {
+      binding.queueEmptyText.visibility = View.VISIBLE
+      binding.queueList.visibility = View.GONE
+    } else {
+      binding.queueEmptyText.visibility = View.GONE
+      binding.queueList.visibility = View.VISIBLE
+    }
   }
 
   private fun hasBluetoothConnectPermission(): Boolean {

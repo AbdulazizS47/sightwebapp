@@ -14,4 +14,7 @@
   <string name="printer_status">Printer Status</string>
   <string name="last_order">Last Order</string>
   <string name="last_error">Last Error</string>
+  <string name="orders_queue">Orders Queue</string>
+  <string name="complete">Complete</string>
+  <string name="no_pending_orders">No pending orders</string>
 </resources>
