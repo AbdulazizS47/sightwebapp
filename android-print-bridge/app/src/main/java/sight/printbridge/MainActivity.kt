@@ -250,7 +250,9 @@ class MainActivity : AppCompatActivity() {
     withContext(Dispatchers.IO) {
       printer.write(EscPos.init())
       try {
-        printer.write(EscPos.buzzer())
+        for (command in EscPos.buzzerSequence()) {
+          printer.write(command)
+        }
       } catch (_: Exception) {
         // Some printers ignore the beep command.
       }

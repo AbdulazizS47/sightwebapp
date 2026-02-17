@@ -27,6 +27,24 @@ object EscPos {
     return byteArrayOf(ESC, 0x42, n.toByte(), t.toByte())
   }
 
+  // ASCII BEL (0x07) - some printers treat this as a beep.
+  fun bell(): ByteArray = byteArrayOf(0x07)
+
+  // ESC ( A pL pH m t n - buzzer (varies by vendor, often ignored)
+  fun buzzerEscA(times: Int = 2, duration: Int = 2): ByteArray {
+    val n = times.coerceIn(1, 9)
+    val t = duration.coerceIn(1, 9)
+    return byteArrayOf(ESC, 0x28, 0x41, 0x03, 0x00, 0x00, t.toByte(), n.toByte())
+  }
+
+  fun buzzerSequence(times: Int = 2, duration: Int = 2): List<ByteArray> {
+    return listOf(
+      buzzer(times, duration),
+      bell(),
+      buzzerEscA(times, duration),
+    )
+  }
+
   fun text(text: String): ByteArray {
     // Many printers expect CRLF line endings
     val normalized = text.replace("\n", "\r\n")
