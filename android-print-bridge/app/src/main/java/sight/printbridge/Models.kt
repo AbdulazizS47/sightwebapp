@@ -24,4 +24,6 @@ data class OrderItem(
   val name: String,
   val price: Double,
   val quantity: Int,
+  val nameEn: String? = null,
+  val nameAr: String? = null,
 )

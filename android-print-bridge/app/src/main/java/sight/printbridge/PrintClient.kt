@@ -145,11 +145,17 @@ private fun JSONArray.toOrderItems(): List<OrderItem> {
   val items = mutableListOf<OrderItem>()
   for (i in 0 until length()) {
     val obj = getJSONObject(i)
+    val rawName = obj.optString("name", "")
+    val nameEn = obj.optString("nameEn", "").takeIf { it.isNotBlank() }
+    val nameAr = obj.optString("nameAr", "").takeIf { it.isNotBlank() }
+    val name = rawName.ifBlank { nameEn ?: nameAr ?: "" }
     items.add(
       OrderItem(
-        name = obj.optString("name", ""),
+        name = name,
         price = obj.optDouble("price", 0.0),
         quantity = obj.optInt("quantity", 1),
+        nameEn = nameEn,
+        nameAr = nameAr,
       )
     )
   }

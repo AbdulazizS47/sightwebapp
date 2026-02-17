@@ -16,12 +16,18 @@ class ReceiptRenderer(private val context: Context) {
   private val margin = 16f
 
   private fun loadArabicTypeface(): Pair<Typeface, Boolean> {
-    return try {
+    val typeface = try {
       context.assets.open("fonts/Cairo-Regular.ttf").close()
-      Pair(Typeface.createFromAsset(context.assets, "fonts/Cairo-Regular.ttf"), true)
+      Typeface.createFromAsset(context.assets, "fonts/Cairo-Regular.ttf")
     } catch (_: Exception) {
-      Pair(Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL), false)
+      Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
     }
+    val probe = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+      textSize = 18f
+      this.typeface = typeface
+    }
+    val hasArabic = probe.hasGlyph("س") && probe.hasGlyph("ع")
+    return Pair(typeface, hasArabic)
   }
 
   fun render(order: Order, logo: Bitmap?): Bitmap {
@@ -71,7 +77,7 @@ class ReceiptRenderer(private val context: Context) {
     val footerLabel =
       if (hasArabic) "share with us @sightcafee شاركنا رايك على" else "Share with us @sightcafee"
 
-    val height = measureHeight(order, logo, text, textSmall, textMuted, hasArabic)
+    val height = measureHeight(order, logo, text, textSmall, textMuted, hasArabic, footerLabel)
     val bitmap = Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     canvas.drawColor(Color.WHITE)
@@ -126,8 +132,8 @@ class ReceiptRenderer(private val context: Context) {
 
     // Items list
     order.items.forEach { item ->
-      val name = if (hasArabic) item.name else stripArabicText(item.name)
-      val qtyName = "${item.quantity}x ${name.ifBlank { "Item" }}"
+      val name = resolveItemName(item, hasArabic)
+      val qtyName = "${item.quantity}x ${name}"
       val price = "${formatMoney(item.price * item.quantity)} SAR"
       y = drawItemRow(canvas, qtyName, price, y, textSmall)
     }
@@ -143,9 +149,9 @@ class ReceiptRenderer(private val context: Context) {
     y += 14f
     y = drawTotalRow(canvas, totalLabel, order.totalWithVat, y, textSmall, bold = true)
 
-    // Footer
+    // Footer (wrapped if needed)
     y += 12f
-    drawCenteredText(canvas, footerLabel, textMuted, y + textMuted.textSize)
+    drawCenteredLines(canvas, footerLabel, textMuted, y, widthPx - margin * 2)
 
     return bitmap
   }
@@ -157,6 +163,7 @@ class ReceiptRenderer(private val context: Context) {
     textSmall: TextPaint,
     textMuted: TextPaint,
     hasArabic: Boolean,
+    footerLabel: String,
   ): Int {
     var h = 0f
     if (logo != null) {
@@ -170,13 +177,17 @@ class ReceiptRenderer(private val context: Context) {
     h += textSmall.textSize + textMuted.textSize + 18f // date/time
     h += textMuted.textSize + 10f // items header
     order.items.forEach { item ->
-      val name = if (hasArabic) item.name else stripArabicText(item.name)
-      val lines = wrapLines("${item.quantity}x ${name.ifBlank { "Item" }}", textSmall, widthPx - margin * 2 - 96f)
+      val name = resolveItemName(item, hasArabic)
+      val price = "${formatMoney(item.price * item.quantity)} SAR"
+      val priceWidth = textSmall.measureText(toEnglishDigits(price))
+      val leftWidth = widthPx - margin * 2 - priceWidth - 8f
+      val lines = wrapLines("${item.quantity}x ${name}", textSmall, leftWidth)
       h += lines.size * (textSmall.textSize + 6f)
     }
     h += 8f + 12f // divider spacing
     h += (textSmall.textSize + 8f) * 3 // subtotal, vat, total
-    h += 26f // footer
+    val footerLines = wrapLines(footerLabel, textMuted, widthPx - margin * 2)
+    h += footerLines.size * (textMuted.textSize + 6f) + 12f
     return (h + 24f).toInt().coerceAtLeast(200)
   }
 
@@ -184,6 +195,21 @@ class ReceiptRenderer(private val context: Context) {
     val clean = toEnglishDigits(text)
     val x = (widthPx - paint.measureText(clean)) / 2f
     canvas.drawText(clean, x, y, paint)
+  }
+
+  private fun drawCenteredLines(
+    canvas: Canvas,
+    text: String,
+    paint: TextPaint,
+    y: Float,
+    maxWidth: Float,
+  ) {
+    val lines = wrapLines(text, paint, maxWidth)
+    var yCursor = y
+    lines.forEach { line ->
+      drawCenteredText(canvas, line, paint, yCursor + paint.textSize)
+      yCursor += paint.textSize + 6f
+    }
   }
 
   private fun drawLabelValue(
@@ -267,6 +293,19 @@ class ReceiptRenderer(private val context: Context) {
 
   private fun formatMoney(value: Double): String {
     return String.format(Locale.US, "%.2f", value)
+  }
+
+  private fun resolveItemName(item: OrderItem, hasArabic: Boolean): String {
+    val nameEn = item.nameEn?.takeIf { it.isNotBlank() }
+    val nameAr = item.nameAr?.takeIf { it.isNotBlank() }
+    val base = item.name.takeIf { it.isNotBlank() }
+    if (hasArabic) {
+      return base ?: nameAr ?: nameEn ?: "Item"
+    }
+    val cleaned = stripArabicText(base ?: "")
+    return cleaned.ifBlank {
+      nameEn ?: stripArabicText(nameAr ?: "")
+    }.ifBlank { "Item" }
   }
 
   private fun stripArabicText(input: String): String {
