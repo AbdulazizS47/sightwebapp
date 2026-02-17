@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -118,10 +119,7 @@ class PrintService : Service() {
                 "Printing ${job.order.orderNumber} (${bitmap.width}x${bitmap.height})"
               )
               withContext(Dispatchers.IO) {
-                printer.write(EscPos.init())
-                printer.write(EscPos.feed(1))
-                printer.write(EscPos.bitmap24(bitmap))
-                printer.write(EscPos.feed(3))
+                printBitmapSafe(bitmap, printerAddress)
               }
               ackWithRetry(client, job.id)
               setPrinterStatus("Printed ${job.order.orderNumber}")
@@ -171,6 +169,53 @@ class PrintService : Service() {
       ?: throw IllegalStateException("Printer not paired")
     printer.connect(device)
     setPrinterStatus("Connected: ${device.name}")
+  }
+
+  private fun printBitmapSafe(bitmap: Bitmap, printerAddress: String) {
+    try {
+      printBitmapChunked(bitmap)
+    } catch (e: Exception) {
+      if (isPipeBroken(e)) {
+        logError("Pipe broken, reconnecting printer", e)
+        printer.disconnect()
+        try {
+          Thread.sleep(300)
+        } catch (_: InterruptedException) {
+        }
+        ensureConnected(printerAddress)
+        printBitmapChunked(bitmap)
+      } else {
+        throw e
+      }
+    }
+  }
+
+  private fun printBitmapChunked(bitmap: Bitmap, maxHeight: Int = 240) {
+    printer.write(EscPos.init())
+    printer.write(EscPos.feed(1))
+    val width = bitmap.width
+    val height = bitmap.height
+    var y = 0
+    while (y < height) {
+      val sliceHeight = minOf(maxHeight, height - y)
+      val slice = Bitmap.createBitmap(bitmap, 0, y, width, sliceHeight)
+      try {
+        printer.write(EscPos.bitmap24(slice))
+        printer.write(EscPos.feed(1))
+      } finally {
+        slice.recycle()
+      }
+      y += sliceHeight
+    }
+    printer.write(EscPos.feed(2))
+  }
+
+  private fun isPipeBroken(e: Exception): Boolean {
+    val msg = e.message?.lowercase() ?: ""
+    return msg.contains("broken pipe") ||
+      msg.contains("stream closed") ||
+      msg.contains("socket") ||
+      msg.contains("connection reset")
   }
 
   private fun buildNotification(text: String): Notification {
