@@ -1,4 +1,6 @@
 import { ArrowLeft, Instagram, Mail, MapPin } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { apiBaseUrl } from '../utils/supabase/info';
 
 interface ContactPageProps {
   onBack: () => void;
@@ -6,6 +8,9 @@ interface ContactPageProps {
 }
 
 export function ContactPage({ onBack, language }: ContactPageProps) {
+  const [hoursEn, setHoursEn] = useState('Daily: 4:00 PM - 2:00 AM');
+  const [hoursAr, setHoursAr] = useState('يوميًا: ٤:٠٠ مساءً - ٢:٠٠ صباحًا');
+
   const content = {
     en: {
       title: 'Contact Us',
@@ -19,7 +24,7 @@ export function ContactPage({ onBack, language }: ContactPageProps) {
       address: 'Al Hofuf, Saudi Arabia',
       locationUrl: 'https://maps.app.goo.gl/XNoBCTw3PpgcMCrRA?g_st=ic',
       hours: 'Hours',
-      hoursText: 'Daily: 4:00 PM - 2:00 AM',
+      hoursText: hoursEn,
     },
     ar: {
       title: 'اتصل بنا',
@@ -33,12 +38,27 @@ export function ContactPage({ onBack, language }: ContactPageProps) {
       address: 'الحسا حساك لو الدهر .. ؟',
       locationUrl: 'https://maps.app.goo.gl/XNoBCTw3PpgcMCrRA?g_st=ic',
       hours: 'ساعات العمل',
-      hoursText: 'يوميًا: ٤:٠٠ مساءً - ٢:٠٠ صباحًا',
+      hoursText: hoursAr,
     },
   };
 
   const text = content[language];
   const isRTL = language === 'ar';
+
+  useEffect(() => {
+    let mounted = true;
+    fetch(`${apiBaseUrl}/settings/public`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!mounted || !data?.success) return;
+        if (data?.hours?.en) setHoursEn(String(data.hours.en));
+        if (data?.hours?.ar) setHoursAr(String(data.hours.ar));
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-[var(--crisp-white)]" dir={isRTL ? 'rtl' : 'ltr'}>
