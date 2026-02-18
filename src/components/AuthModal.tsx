@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { apiBaseUrl } from '../utils/supabase/info';
+import { readOtpFromSms } from '../utils/otpAutofill';
 
 interface AuthModalProps {
   onClose: () => void;
@@ -18,6 +19,7 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
   const [demoOtp, setDemoOtp] = useState('');
   const [tempSessionToken, setTempSessionToken] = useState('');
   const [tempUser, setTempUser] = useState<any>(null);
+  const otpInputRef = useRef<HTMLInputElement | null>(null);
 
   const content = {
     en: {
@@ -194,6 +196,16 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
     }
   };
 
+  useEffect(() => {
+    if (step !== 'otp') return;
+    otpInputRef.current?.focus();
+    const controller = new AbortController();
+    readOtpFromSms(controller.signal).then((code) => {
+      if (code) setOtp(code);
+    });
+    return () => controller.abort();
+  }, [step]);
+
   return (
     <div
       className="fixed inset-0 bg-[var(--matte-black)] bg-opacity-90 z-50 flex items-center justify-center p-6"
@@ -254,22 +266,31 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
           <div>
             <label className="block text-sm mb-2 text-[var(--matte-black)]">{text.otpLabel}</label>
             <input
+              ref={otpInputRef}
               type="text"
               value={otp}
               onChange={(e) => {
                 const digits = e.target.value.replace(/\D/g, '').slice(0, 6);
                 setOtp(digits);
               }}
+              onPaste={(e) => {
+                const digits = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+                if (digits) {
+                  e.preventDefault();
+                  setOtp(digits);
+                }
+              }}
               placeholder={text.otpPlaceholder}
               maxLength={6}
               dir="ltr"
               inputMode="numeric"
               autoComplete="one-time-code"
-              name="one-time-code"
+              name="otp"
               pattern="[0-9]*"
               autoCorrect="off"
               autoCapitalize="off"
               enterKeyHint="done"
+              autoFocus
               className="w-full p-4 border-2 border-[var(--matte-black)] bg-[var(--crisp-white)] text-[var(--matte-black)] mb-4 focus:outline-none focus:border-[var(--espresso-brown)]"
               disabled={loading}
             />

@@ -62,6 +62,24 @@ interface AdminPanelProps {
 }
 
 type Tab = 'orders' | 'menu';
+const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp';
+const MAX_UPLOAD_IMAGE_BYTES = 5 * 1024 * 1024;
+const UPLOAD_ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const UPLOAD_ALLOWED_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+
+const getImageUploadError = (file: File) => {
+  const type = String(file.type || '').toLowerCase().trim();
+  const ext = String(file.name || '')
+    .toLowerCase()
+    .match(/\.[a-z0-9]+$/)?.[0];
+  if (!UPLOAD_ALLOWED_IMAGE_TYPES.has(type) && !(ext && UPLOAD_ALLOWED_IMAGE_EXTENSIONS.has(ext))) {
+    return 'Unsupported format. Please use JPG, PNG, or WEBP.';
+  }
+  if (file.size > MAX_UPLOAD_IMAGE_BYTES) {
+    return 'Image too large (max 5MB).';
+  }
+  return '';
+};
 
 export function AdminPanel({
   onBack,
@@ -210,16 +228,6 @@ export function AdminPanel({
     });
   };
 
-  const dateKeyToRange = (dateKey: string) => {
-    if (!/^\d{8}$/.test(dateKey)) return { from: 0, to: 0 };
-    const y = Number(dateKey.slice(0, 4));
-    const m = Number(dateKey.slice(4, 6)) - 1;
-    const d = Number(dateKey.slice(6, 8));
-    const from = new Date(y, m, d, 0, 0, 0, 0).getTime();
-    const to = new Date(y, m, d, 23, 59, 59, 999).getTime();
-    return { from, to };
-  };
-
   useEffect(() => {
     if (activeTab === 'orders') {
       if (mode === 'history') {
@@ -267,17 +275,18 @@ export function AdminPanel({
             : historyRange === '7d'
               ? now - 7 * 24 * 60 * 60 * 1000
               : 0;
-        const range = selectedDateKey
-          ? dateKeyToRange(selectedDateKey)
-          : { from: defaultFrom, to: 0 };
-      const params = new URLSearchParams();
-      params.set('limit', '200');
-      params.set('status', 'all');
-      if (range.from) params.set('from', String(range.from));
-      if (range.to) params.set('to', String(range.to));
-      const q = historyQuery.trim();
-      if (q) params.set('q', q);
-      url = `${url}?${params.toString()}`;
+
+        const params = new URLSearchParams();
+        params.set('limit', '200');
+        params.set('status', 'all');
+        if (/^\d{8}$/.test(selectedDateKey)) {
+          params.set('dateKey', selectedDateKey);
+        } else if (defaultFrom) {
+          params.set('from', String(defaultFrom));
+        }
+        const q = historyQuery.trim();
+        if (q) params.set('q', q);
+        url = `${url}?${params.toString()}`;
       }
 
       const response = await fetch(url, {
@@ -671,6 +680,11 @@ export function AdminPanel({
   };
 
   const uploadImage = async (file: File): Promise<string | null> => {
+    const fileError = getImageUploadError(file);
+    if (fileError) {
+      alert(fileError);
+      return null;
+    }
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -688,9 +702,13 @@ export function AdminPanel({
       if (data.success) {
         return data.imageUrl;
       }
+      if (data.error) {
+        alert(data.error);
+      }
       return null;
     } catch (error) {
       console.error('Error uploading image:', error);
+      alert('Image upload failed');
       return null;
     }
   };
@@ -1241,7 +1259,7 @@ export function AdminPanel({
                               )}
                               <input
                                 type="file"
-                                accept="image/*"
+                                accept={IMAGE_ACCEPT}
                                 onChange={(e) => {
                                   const file = e.target.files?.[0];
                                   if (file) handleImageUpload(item.id, file);
@@ -1620,7 +1638,7 @@ export function AdminPanel({
                           )}
                           <input
                             type="file"
-                            accept="image/*"
+                            accept={IMAGE_ACCEPT}
                             onChange={(e) => {
                               const file = e.target.files?.[0];
                               if (file) handleImageUpload(null, file);

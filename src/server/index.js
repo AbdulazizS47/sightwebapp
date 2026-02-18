@@ -89,6 +89,19 @@ const CORS_ORIGINS = (process.env.CORS_ORIGINS || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+const EXT_TO_IMAGE_CONTENT_TYPE = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml',
+  '.heic': 'image/heic',
+  '.heif': 'image/heif',
+};
+const UPLOAD_ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 // In-memory cache of sessions (persistent store is MySQL)
 const sessions = new Map();
 
@@ -186,6 +199,37 @@ function getMinutesInTimeZone(date, timeZone) {
   }
 }
 
+function getLocalDateKey(date) {
+  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(
+    date.getDate()
+  ).padStart(2, '0')}`;
+}
+
+function getDateKeyInTimeZone(date, timeZone) {
+  const tz = String(timeZone || '').trim() || DEFAULT_TIMEZONE;
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const parts = formatter.formatToParts(date);
+    const year = parts.find((p) => p.type === 'year')?.value;
+    const month = parts.find((p) => p.type === 'month')?.value;
+    const day = parts.find((p) => p.type === 'day')?.value;
+    if (!year || !month || !day) return getLocalDateKey(date);
+    return `${year}${month}${day}`;
+  } catch {
+    return getLocalDateKey(date);
+  }
+}
+
+async function getCurrentDateKey() {
+  const timeZone = await getSetting('timeZone', DEFAULT_TIMEZONE);
+  return getDateKeyInTimeZone(new Date(), timeZone || DEFAULT_TIMEZONE);
+}
+
 function isOpenForSchedule(now, start, end, timeZone) {
   const startMin = parseTimeToMinutes(start);
   const endMin = parseTimeToMinutes(end);
@@ -276,16 +320,7 @@ app.get('/uploads/:filename', async (c) => {
     const data = await fs.readFile(filePath);
 
     const ext = path.extname(safeName).toLowerCase();
-    const contentType =
-      ext === '.jpg' || ext === '.jpeg'
-        ? 'image/jpeg'
-        : ext === '.png'
-          ? 'image/png'
-          : ext === '.webp'
-            ? 'image/webp'
-            : ext === '.gif'
-              ? 'image/gif'
-              : 'application/octet-stream';
+    const contentType = EXT_TO_IMAGE_CONTENT_TYPE[ext] || 'application/octet-stream';
 
     return new Response(data, {
       headers: {
@@ -1221,8 +1256,7 @@ app.post('/api/orders/create', async (c) => {
       }
     }
 
-    const now = new Date();
-    const dateKey = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const dateKey = await getCurrentDateKey();
     const displayNumber = await getTodayNextDisplayNumber(dateKey);
     const orderNumber = `${dateKey}-${String(displayNumber).padStart(3, '0')}`;
     const orderId = `order:${orderNumber}`;
@@ -1606,6 +1640,7 @@ app.get('/api/admin/orders/history', async (c) => {
     const offset = Math.max(Number(c.req.query('offset') || 0) || 0, 0);
     const from = Number(c.req.query('from') || 0) || 0;
     const to = Number(c.req.query('to') || 0) || 0;
+    const dateKey = (c.req.query('dateKey') || '').trim();
     const status = (c.req.query('status') || 'all').trim();
 
     const where = [];
@@ -1619,13 +1654,19 @@ app.get('/api/admin/orders/history', async (c) => {
       }
     }
 
-    if (from > 0) {
-      where.push('createdAt >= ?');
-      params.push(from);
-    }
-    if (to > 0) {
-      where.push('createdAt <= ?');
-      params.push(to);
+    if (dateKey) {
+      if (!/^\d{8}$/.test(dateKey)) return c.json({ error: 'Invalid dateKey' }, 400);
+      where.push('dateKey = ?');
+      params.push(dateKey);
+    } else {
+      if (from > 0) {
+        where.push('createdAt >= ?');
+        params.push(from);
+      }
+      if (to > 0) {
+        where.push('createdAt <= ?');
+        params.push(to);
+      }
     }
     if (q) {
       where.push('(orderNumber LIKE ? OR COALESCE(phoneNumber, "") LIKE ? OR id LIKE ?)');
@@ -1657,6 +1698,7 @@ app.get('/api/admin/orders/history/days', async (c) => {
     const offset = Math.max(Number(c.req.query('offset') || 0) || 0, 0);
     const from = Number(c.req.query('from') || 0) || 0;
     const to = Number(c.req.query('to') || 0) || 0;
+    const dateKey = (c.req.query('dateKey') || '').trim();
     const status = (c.req.query('status') || 'completed').trim();
 
     const where = [];
@@ -1668,13 +1710,19 @@ app.get('/api/admin/orders/history/days', async (c) => {
         where.push('completedAt IS NULL');
       }
     }
-    if (from > 0) {
-      where.push('createdAt >= ?');
-      params.push(from);
-    }
-    if (to > 0) {
-      where.push('createdAt <= ?');
-      params.push(to);
+    if (dateKey) {
+      if (!/^\d{8}$/.test(dateKey)) return c.json({ error: 'Invalid dateKey' }, 400);
+      where.push('dateKey = ?');
+      params.push(dateKey);
+    } else {
+      if (from > 0) {
+        where.push('createdAt >= ?');
+        params.push(from);
+      }
+      if (to > 0) {
+        where.push('createdAt <= ?');
+        params.push(to);
+      }
     }
     if (q) {
       where.push('(orderNumber LIKE ? OR COALESCE(phoneNumber, "") LIKE ? OR id LIKE ?)');
@@ -1720,8 +1768,7 @@ app.get('/api/admin/orders/stats', async (c) => {
   if (unauthorized) return unauthorized;
 
   try {
-    const now = new Date();
-    const dateKey = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const dateKey = await getCurrentDateKey();
 
     const [liveRows] = await pool.execute(
       'SELECT COUNT(*) AS count FROM orders WHERE status != ?',
@@ -1790,10 +1837,20 @@ app.post('/api/admin/upload-image', async (c) => {
       return c.json({ error: 'file is required (multipart/form-data)' }, 400);
     }
 
-    const contentType = String(file.type || '').toLowerCase();
+    const contentTypeRaw = String(file.type || '').toLowerCase().trim();
+    const contentType =
+      contentTypeRaw === 'image/jpg' || contentTypeRaw === 'image/pjpeg'
+        ? 'image/jpeg'
+        : contentTypeRaw;
+    const extFromName = path.extname(String(file.name || '')).toLowerCase();
+    const typeFromExt = EXT_TO_IMAGE_CONTENT_TYPE[extFromName] || '';
+    const effectiveImageType = contentType || typeFromExt;
     const size = Number(file.size || 0);
-    if (!contentType.startsWith('image/')) {
+    if (!effectiveImageType.startsWith('image/')) {
       return c.json({ error: 'Only image uploads are allowed' }, 400);
+    }
+    if (!UPLOAD_ALLOWED_IMAGE_TYPES.has(effectiveImageType)) {
+      return c.json({ error: 'Unsupported image format. Please upload JPG, PNG, or WEBP.' }, 400);
     }
     if (size > 5 * 1024 * 1024) {
       return c.json({ error: 'Image too large (max 5MB)' }, 400);
@@ -1801,13 +1858,10 @@ app.post('/api/admin/upload-image', async (c) => {
 
     const extFromType = {
       'image/jpeg': '.jpg',
-      'image/jpg': '.jpg',
       'image/png': '.png',
       'image/webp': '.webp',
-      'image/gif': '.gif',
     };
-    const ext =
-      extFromType[contentType] || path.extname(String(file.name || '')).slice(0, 10) || '.bin';
+    const ext = extFromType[effectiveImageType] || '.bin';
     const safeExt = ext.startsWith('.')
       ? ext.replace(/[^.a-z0-9]/g, '')
       : `.${ext.replace(/[^a-z0-9]/g, '')}`;

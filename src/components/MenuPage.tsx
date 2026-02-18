@@ -65,6 +65,25 @@ interface MenuPageProps {
   adminMode?: 'edit' | 'order';
 }
 
+const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp';
+const MAX_UPLOAD_IMAGE_BYTES = 5 * 1024 * 1024;
+const UPLOAD_ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const UPLOAD_ALLOWED_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+
+const getImageUploadError = (file: File) => {
+  const type = String(file.type || '').toLowerCase().trim();
+  const ext = String(file.name || '')
+    .toLowerCase()
+    .match(/\.[a-z0-9]+$/)?.[0];
+  if (!UPLOAD_ALLOWED_IMAGE_TYPES.has(type) && !(ext && UPLOAD_ALLOWED_IMAGE_EXTENSIONS.has(ext))) {
+    return 'Unsupported format. Please use JPG, PNG, or WEBP.';
+  }
+  if (file.size > MAX_UPLOAD_IMAGE_BYTES) {
+    return 'Image too large (max 5MB).';
+  }
+  return '';
+};
+
 export function MenuPage({
   onBack,
   onOpenCart,
@@ -261,6 +280,11 @@ export function MenuPage({
   // Image upload helper for admin (in-component scope)
   const uploadImageFile = async (file: File): Promise<string | undefined> => {
     if (!sessionToken || !isAdmin) return;
+    const fileError = getImageUploadError(file);
+    if (fileError) {
+      alert(fileError);
+      return;
+    }
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -274,9 +298,9 @@ export function MenuPage({
       const json = await res.json();
       if (json.success && json.imageUrl) return json.imageUrl;
       throw new Error(json.error || 'Upload failed');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Image upload failed:', err);
-      alert('Image upload failed');
+      alert(err?.message || 'Image upload failed');
     }
   };
 
@@ -979,7 +1003,7 @@ export function MenuPage({
                         )}
                         <input
                           type="file"
-                          accept="image/*"
+                          accept={IMAGE_ACCEPT}
                           onChange={async (e) => {
                             const file = e.target.files?.[0];
                             if (file) {
@@ -1179,7 +1203,7 @@ export function MenuPage({
                           {/* Admin image upload for new item */}
                           <input
                             type="file"
-                            accept="image/*"
+                            accept={IMAGE_ACCEPT}
                             onChange={async (e) => {
                               const file = e.target.files?.[0];
                               if (file) {

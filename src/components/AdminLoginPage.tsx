@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiBaseUrl } from '../utils/supabase/info';
+import { readOtpFromSms } from '../utils/otpAutofill';
 
 interface AdminLoginPageProps {
   onBack: () => void;
@@ -14,6 +15,7 @@ export function AdminLoginPage({ onBack, onSuccess, language }: AdminLoginPagePr
   const [step, setStep] = useState<'phone' | 'otp'>('phone');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const otpInputRef = useRef<HTMLInputElement | null>(null);
 
   const content = {
     en: {
@@ -91,6 +93,16 @@ export function AdminLoginPage({ onBack, onSuccess, language }: AdminLoginPagePr
     }
   };
 
+  useEffect(() => {
+    if (step !== 'otp') return;
+    otpInputRef.current?.focus();
+    const controller = new AbortController();
+    readOtpFromSms(controller.signal).then((code) => {
+      if (code) setOtp(code);
+    });
+    return () => controller.abort();
+  }, [step]);
+
   return (
     <div
       className="min-h-screen bg-[var(--matte-black)] text-[var(--matte-black)]"
@@ -133,12 +145,28 @@ export function AdminLoginPage({ onBack, onSuccess, language }: AdminLoginPagePr
             <div>
               <label className="block text-sm mb-2">{text.otpLabel}</label>
               <input
+                ref={otpInputRef}
                 type="text"
                 value={otp}
-                onChange={(e) => setOtp(e.target.value)}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                onPaste={(e) => {
+                  const digits = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+                  if (digits) {
+                    e.preventDefault();
+                    setOtp(digits);
+                  }
+                }}
                 placeholder={text.otpPlaceholder}
                 maxLength={6}
                 dir="ltr"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                name="otp"
+                pattern="[0-9]*"
+                autoCorrect="off"
+                autoCapitalize="off"
+                enterKeyHint="done"
+                autoFocus
                 className="w-full p-4 border-2 border-[var(--matte-black)] bg-[var(--crisp-white)] mb-4 focus:outline-none focus:border-[var(--espresso-brown)]"
               />
 
