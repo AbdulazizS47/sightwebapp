@@ -1497,6 +1497,18 @@ app.get('/api/orders/:id', async (c) => {
     if (!sessionUser) return c.json({ error: 'Unauthorized' }, 401);
 
     const raw = decodeURIComponent(String(c.req.param('id') || '')).trim();
+    if (raw.toLowerCase() === 'my') {
+      // Hono matches `/api/orders/:id` before the later `/api/orders/my` route.
+      // Serve the "my orders" payload here to avoid a route-order regression.
+      const limit = Math.min(Math.max(Number(c.req.query('limit') || 20) || 20, 1), 200);
+      const safeLimit = Math.trunc(limit);
+      const [rows] = await pool.execute(
+        `SELECT * FROM orders WHERE userId = ? ORDER BY createdAt DESC LIMIT ${safeLimit}`,
+        [sessionUser.id]
+      );
+      const orders = (Array.isArray(rows) ? rows : []).map(mapOrderRow);
+      return c.json({ success: true, orders });
+    }
     const orderNumber = raw.startsWith('order:') ? raw.slice('order:'.length) : raw;
     if (!/^\d{8}-\d{3}$/.test(orderNumber)) {
       return c.json({ error: 'Invalid order id' }, 400);
@@ -1530,9 +1542,10 @@ app.get('/api/orders/my', async (c) => {
     if (!sessionUser) return c.json({ error: 'Unauthorized' }, 401);
 
     const limit = Math.min(Math.max(Number(c.req.query('limit') || 20) || 20, 1), 200);
+    const safeLimit = Math.trunc(limit);
     const [rows] = await pool.execute(
-      'SELECT * FROM orders WHERE userId = ? ORDER BY createdAt DESC LIMIT ?',
-      [sessionUser.id, limit]
+      `SELECT * FROM orders WHERE userId = ? ORDER BY createdAt DESC LIMIT ${safeLimit}`,
+      [sessionUser.id]
     );
     const orders = (Array.isArray(rows) ? rows : []).map(mapOrderRow);
     return c.json({ success: true, orders });
@@ -1675,8 +1688,9 @@ app.get('/api/admin/orders/history', async (c) => {
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const sql = `SELECT * FROM orders ${whereSql} ORDER BY createdAt DESC LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
+    const safeLimit = Math.trunc(limit);
+    const safeOffset = Math.trunc(offset);
+    const sql = `SELECT * FROM orders ${whereSql} ORDER BY createdAt DESC LIMIT ${safeLimit} OFFSET ${safeOffset}`;
 
     const [rows] = await pool.execute(sql, params);
     const orders = rows.map(mapOrderRow);
@@ -1731,6 +1745,8 @@ app.get('/api/admin/orders/history/days', async (c) => {
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const safeLimit = Math.trunc(limit);
+    const safeOffset = Math.trunc(offset);
     const sql = `
       SELECT
         dateKey,
@@ -1742,11 +1758,10 @@ app.get('/api/admin/orders/history/days', async (c) => {
       ${whereSql}
       GROUP BY dateKey
       ORDER BY dateKey DESC
-      LIMIT ? OFFSET ?
+      LIMIT ${safeLimit} OFFSET ${safeOffset}
     `;
 
-    const finalParams = [...params, limit, offset];
-    const [rows] = await pool.execute(sql, finalParams);
+    const [rows] = await pool.execute(sql, params);
     const days = (Array.isArray(rows) ? rows : []).map((r) => ({
       dateKey: String(r.dateKey),
       orders: Number(r.orders || 0),
