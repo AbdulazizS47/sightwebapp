@@ -144,6 +144,7 @@ export function MenuPage({
     nameAr: '',
   });
   const [lastAddedId, setLastAddedId] = useState<string | null>(null);
+  const [cardQuantities, setCardQuantities] = useState<Record<string, number>>({});
 
   // Check if user is admin (superuser)
   // const isAdmin = user?.phoneNumber === '0547444145';
@@ -205,6 +206,15 @@ export function MenuPage({
     };
   }, []);
 
+  useEffect(() => {
+    const next: Record<string, number> = {};
+    for (const item of cartItems) {
+      const qty = Number(item.quantity) || 0;
+      if (qty > 0) next[String(item.id)] = qty;
+    }
+    setCardQuantities(next);
+  }, [cartItems]);
+
   const loadMenu = async () => {
     setLoading(true);
     try {
@@ -263,6 +273,10 @@ export function MenuPage({
   };
 
   const addToCart = (item: MenuItem) => {
+    setCardQuantities((prev) => ({
+      ...prev,
+      [String(item.id)]: (Number(prev[String(item.id)]) || 0) + 1,
+    }));
     setCart((prevCart) => {
       const existingItem = prevCart.find((cartItem) => cartItem.id === item.id);
       if (existingItem) {
@@ -279,6 +293,16 @@ export function MenuPage({
 
   const changeItemQuantity = (item: MenuItem, delta: number) => {
     if (!delta) return;
+    setCardQuantities((prev) => {
+      const key = String(item.id);
+      const current = Number(prev[key]) || 0;
+      const nextQty = Math.max(0, current + delta);
+      if (nextQty <= 0) {
+        const { [key]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [key]: nextQty };
+    });
     setCart((prevCart) => {
       const existingItem = prevCart.find((cartItem) => cartItem.id === item.id);
       if (!existingItem && delta < 0) return prevCart;
@@ -296,7 +320,7 @@ export function MenuPage({
   };
 
   const getItemCartQuantity = (itemId: string) => {
-    return cart.find((cartItem) => cartItem.id === itemId)?.quantity || 0;
+    return Number(cardQuantities[String(itemId)]) || 0;
   };
 
   // Image upload helper for admin (in-component scope)
