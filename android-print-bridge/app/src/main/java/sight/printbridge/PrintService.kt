@@ -44,6 +44,7 @@ class PrintService : Service() {
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     if (job?.isActive == true) return START_STICKY
+    migrateReceiptProfileIfNeeded()
 
     job = scope.launch {
       val serverUrl = fixedServerUrl
@@ -80,7 +81,6 @@ class PrintService : Service() {
       }
 
       val client = PrintClient(normalized, deviceKey)
-      val renderer = ReceiptRenderer(this@PrintService)
       val logo = loadLogo(this@PrintService)
 
       try {
@@ -116,6 +116,11 @@ class PrintService : Service() {
               OrderQueue.add(prefs, job.order)
               playNotificationSound()
               ensureConnected(printerAddress)
+              val receiptWidthPx = prefs.getInt(
+                StatusKeys.RECEIPT_WIDTH_PX,
+                StatusKeys.DEFAULT_RECEIPT_WIDTH_PX
+              )
+              val renderer = ReceiptRenderer(this@PrintService, targetWidthPx = receiptWidthPx)
               val bitmap = renderer.render(job.order, logo)
               if (!bitmapHasInk(bitmap)) {
                 throw IllegalStateException("Rendered bitmap is blank")
@@ -195,6 +200,23 @@ class PrintService : Service() {
     }
   }
 
+  private fun migrateReceiptProfileIfNeeded() {
+    val version = prefs.getInt(StatusKeys.RECEIPT_LAYOUT_VERSION, 0)
+    if (version >= StatusKeys.RECEIPT_LAYOUT_VERSION_CURRENT) return
+
+    val savedWidth = prefs.getInt(StatusKeys.RECEIPT_WIDTH_PX, StatusKeys.RECEIPT_WIDTH_58MM)
+    val upgradedWidth = when (savedWidth) {
+      StatusKeys.RECEIPT_WIDTH_58MM -> StatusKeys.RECEIPT_WIDTH_80MM
+      StatusKeys.RECEIPT_WIDTH_80MM -> StatusKeys.RECEIPT_WIDTH_80MM
+      else -> StatusKeys.DEFAULT_RECEIPT_WIDTH_PX
+    }
+
+    prefs.edit()
+      .putInt(StatusKeys.RECEIPT_WIDTH_PX, upgradedWidth)
+      .putInt(StatusKeys.RECEIPT_LAYOUT_VERSION, StatusKeys.RECEIPT_LAYOUT_VERSION_CURRENT)
+      .apply()
+  }
+
   private fun printBitmapChunked(bitmap: Bitmap, maxHeight: Int = 240, beep: Boolean = true) {
     printer.write(EscPos.init())
     if (beep) {
@@ -206,22 +228,35 @@ class PrintService : Service() {
         // Some printers ignore beep command; proceed with printing.
       }
     }
-    printer.write(EscPos.feed(1))
     val width = bitmap.width
     val height = bitmap.height
     var y = 0
+    val alignedChunk = ((maxHeight / 24) * 24).coerceAtLeast(24)
     while (y < height) {
-      val sliceHeight = minOf(maxHeight, height - y)
+      val remaining = height - y
+      val sliceHeight = if (remaining > alignedChunk) alignedChunk else remaining
       val slice = Bitmap.createBitmap(bitmap, 0, y, width, sliceHeight)
       try {
         printer.write(EscPos.bitmap24(slice))
-        printer.write(EscPos.feed(1))
+        try {
+          Thread.sleep(25)
+        } catch (_: InterruptedException) {
+        }
       } finally {
         slice.recycle()
       }
       y += sliceHeight
     }
-    printer.write(EscPos.feed(2))
+    printer.write(EscPos.feed(8))
+    try {
+      Thread.sleep(180)
+    } catch (_: InterruptedException) {
+    }
+    try {
+      printer.write(EscPos.cut())
+    } catch (_: Exception) {
+      // Not all thermal printers support cut command.
+    }
   }
 
   private fun isPipeBroken(e: Exception): Boolean {

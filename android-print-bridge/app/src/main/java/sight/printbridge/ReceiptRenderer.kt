@@ -11,14 +11,24 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-class ReceiptRenderer(private val context: Context) {
-  private val widthPx = 384
-  private val margin = 16f
+class ReceiptRenderer(
+  private val context: Context,
+  targetWidthPx: Int = StatusKeys.DEFAULT_RECEIPT_WIDTH_PX,
+) {
+  private val widthPx = targetWidthPx.coerceIn(320, 832)
+  private val layoutScale = (
+    1f + ((widthPx - StatusKeys.RECEIPT_WIDTH_58MM.toFloat()) / StatusKeys.RECEIPT_WIDTH_58MM) * 0.55f
+    ).coerceIn(1f, 1.65f)
+  private val margin = (widthPx * 0.035f).coerceIn(scale(14f), scale(34f))
+
+  private fun scale(value: Float): Float = value * layoutScale
 
   private fun loadArabicTypeface(): Pair<Typeface, Boolean> {
     val typeface = try {
       context.assets.open("fonts/Cairo-Regular.ttf").close()
-      Typeface.createFromAsset(context.assets, "fonts/Cairo-Regular.ttf")
+      Typeface.createFromAsset(context.assets, "fonts/Cairo-Regular.ttf"==p[=-[p=--[
+        []
+      ]]]
     } catch (_: Exception) {
       Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
     }
@@ -32,39 +42,29 @@ class ReceiptRenderer(private val context: Context) {
 
   fun render(order: Order, logo: Bitmap?): Bitmap {
     val (typeface, hasArabic) = loadArabicTypeface()
-    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-      color = Color.BLACK
-      textSize = 22f
-      this.typeface = typeface
-    }
     val textSmall = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
       color = Color.BLACK
-      textSize = 18f
+      textSize = scale(20f)
       this.typeface = typeface
     }
     val textMuted = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
       color = Color.DKGRAY
-      textSize = 18f
+      textSize = scale(18f)
       this.typeface = typeface
     }
     val textLarge = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
       color = Color.BLACK
-      textSize = 36f
-      this.typeface = typeface
-    }
-    val textMedium = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-      color = Color.BLACK
-      textSize = 20f
-      this.typeface = typeface
+      textSize = scale(44f)
+      this.typeface = Typeface.create(typeface, Typeface.BOLD)
     }
     val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
       color = Color.BLACK
-      strokeWidth = 2f
+      strokeWidth = scale(2f).coerceIn(2f, 4f)
     }
     val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
       color = Color.BLACK
       style = Paint.Style.STROKE
-      strokeWidth = 2f
+      strokeWidth = scale(2f).coerceIn(2f, 4f)
     }
 
     val orderLabel = if (hasArabic) "Order Number / رقم الطلب" else "Order Number"
@@ -77,30 +77,34 @@ class ReceiptRenderer(private val context: Context) {
     val footerLabel =
       if (hasArabic) "share with us @sightcafee شاركنا رايك على" else "Share with us @sightcafee"
 
-    val height = measureHeight(order, logo, text, textSmall, textMuted, hasArabic, footerLabel)
+    val height = measureHeight(order, logo, textSmall, textMuted, hasArabic, footerLabel)
     val bitmap = Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     canvas.drawColor(Color.WHITE)
 
+    val sectionGap = scale(16f)
+    val rowGap = scale(10f)
     var y = 0f
     if (logo != null) {
-      val logoWidth = (widthPx * 0.65f).toInt()
+      val logoWidth = (widthPx * 0.58f).toInt()
       val logoHeight = (logoWidth.toFloat() / logo.width * logo.height).toInt()
       val scaled = Bitmap.createScaledBitmap(logo, logoWidth, logoHeight, true)
       val x = (widthPx - logoWidth) / 2f
-      canvas.drawBitmap(scaled, x, y + 6f, null)
-      y += logoHeight + 18f
-    } else {
-      y += 6f
+      canvas.drawBitmap(scaled, x, y, null)
+      y += logoHeight + sectionGap
     }
 
     // Order number block
-    val blockHeight = 96f
+    val orderLabelGap = scale(10f)
+    val orderTopPadding = scale(12f)
+    val orderBottomPadding = scale(14f)
+    val blockHeight = orderTopPadding + textMuted.textSize + orderLabelGap + textLarge.textSize + orderBottomPadding
     canvas.drawRect(margin, y, widthPx - margin, y + blockHeight, framePaint)
-    drawCenteredText(canvas, orderLabel, textMuted, y + 24f)
+    val orderLabelY = y + orderTopPadding + textMuted.textSize
+    drawCenteredText(canvas, orderLabel, textMuted, orderLabelY)
     val display = "#${order.displayNumber}"
-    drawCenteredText(canvas, toEnglishDigits(display), textLarge, y + 64f)
-    y += blockHeight + 18f
+    drawCenteredText(canvas, toEnglishDigits(display), textLarge, orderLabelY + orderLabelGap + textLarge.textSize)
+    y += blockHeight + sectionGap
 
     // Date and time row
     val dateTime = formatDateTime(order.createdAt)
@@ -124,34 +128,43 @@ class ReceiptRenderer(private val context: Context) {
       textSmall,
       alignRight = true
     )
-    y += textSmall.textSize + textMuted.textSize + 18f
+    y += textSmall.textSize + textMuted.textSize + rowGap
+    canvas.drawLine(margin, y, widthPx - margin, y, linePaint)
+    y += rowGap
 
     // Items header
     canvas.drawText(itemsLabel, margin, y + textMuted.textSize, textMuted)
-    y += textMuted.textSize + 10f
+    y += textMuted.textSize + scale(8f)
 
     // Items list
     order.items.forEach { item ->
       val name = resolveItemName(item, hasArabic)
       val qtyName = "${item.quantity}x ${name}"
       val price = "${formatMoney(item.price * item.quantity)} SAR"
-      y = drawItemRow(canvas, qtyName, price, y, textSmall)
+      y = drawItemRow(canvas, qtyName, price, y, textSmall, rowGap = scale(6f))
     }
 
-    y += 8f
+    y += scale(8f)
     canvas.drawLine(margin, y, widthPx - margin, y, linePaint)
-    y += 12f
+    y += rowGap
 
     // Totals
-    y = drawTotalRow(canvas, subtotalLabel, order.subtotalExclVat, y, textSmall, bold = false)
-    y = drawTotalRow(canvas, vatLabel, order.vatAmount, y, textSmall, bold = false)
-    canvas.drawLine(margin, y + 4f, widthPx - margin, y + 4f, linePaint)
-    y += 14f
-    y = drawTotalRow(canvas, totalLabel, order.totalWithVat, y, textSmall, bold = true)
+    y = drawTotalRow(canvas, subtotalLabel, order.subtotalExclVat, y, textSmall, rowGap = scale(9f), bold = false)
+    y = drawTotalRow(canvas, vatLabel, order.vatAmount, y, textSmall, rowGap = scale(9f), bold = false)
+    canvas.drawLine(margin, y + scale(3f), widthPx - margin, y + scale(3f), linePaint)
+    y += scale(14f)
+    y = drawTotalRow(canvas, totalLabel, order.totalWithVat, y, textSmall, rowGap = scale(9f), bold = true)
 
     // Footer (wrapped if needed)
-    y += 12f
-    drawCenteredLines(canvas, footerLabel, textMuted, y, widthPx - margin * 2)
+    y += scale(12f)
+    drawCenteredLines(
+      canvas = canvas,
+      text = footerLabel,
+      paint = textMuted,
+      y = y,
+      maxWidth = widthPx - margin * 2,
+      lineGap = scale(6f),
+    )
 
     return bitmap
   }
@@ -159,36 +172,52 @@ class ReceiptRenderer(private val context: Context) {
   private fun measureHeight(
     order: Order,
     logo: Bitmap?,
-    text: Paint,
     textSmall: TextPaint,
     textMuted: TextPaint,
     hasArabic: Boolean,
     footerLabel: String,
   ): Int {
+    val sectionGap = scale(16f)
+    val rowGap = scale(10f)
+    val itemRowGap = scale(6f)
     var h = 0f
     if (logo != null) {
-      val logoWidth = (widthPx * 0.65f).toInt()
+      val logoWidth = (widthPx * 0.58f).toInt()
       val logoHeight = (logoWidth.toFloat() / logo.width * logo.height).toInt()
-      h += logoHeight + 18f
-    } else {
-      h += 6f
+      h += logoHeight + sectionGap
     }
-    h += 96f + 18f // order block
-    h += textSmall.textSize + textMuted.textSize + 18f // date/time
-    h += textMuted.textSize + 10f // items header
+
+    val textLarge = TextPaint(textSmall).apply {
+      textSize = scale(44f)
+      typeface = Typeface.create(typeface, Typeface.BOLD)
+    }
+    val orderLabelGap = scale(10f)
+    val orderTopPadding = scale(12f)
+    val orderBottomPadding = scale(14f)
+    val orderBlockHeight =
+      orderTopPadding + textMuted.textSize + orderLabelGap + textLarge.textSize + orderBottomPadding
+
+    h += orderBlockHeight + sectionGap
+    h += textSmall.textSize + textMuted.textSize + rowGap // date/time
+    h += rowGap // divider after date/time
+    h += textMuted.textSize + scale(8f) // items header
     order.items.forEach { item ->
       val name = resolveItemName(item, hasArabic)
       val price = "${formatMoney(item.price * item.quantity)} SAR"
       val priceWidth = textSmall.measureText(toEnglishDigits(price))
-      val leftWidth = widthPx - margin * 2 - priceWidth - 8f
+      val leftWidth = (widthPx - margin * 2 - priceWidth - scale(10f)).coerceAtLeast(scale(120f))
       val lines = wrapLines("${item.quantity}x ${name}", textSmall, leftWidth)
-      h += lines.size * (textSmall.textSize + 6f)
+      h += lines.size * (textSmall.textSize + itemRowGap)
     }
-    h += 8f + 12f // divider spacing
-    h += (textSmall.textSize + 8f) * 3 // subtotal, vat, total
+
+    h += scale(8f) + rowGap // divider spacing
+    h += (textSmall.textSize + scale(9f)) * 2 // subtotal, vat
+    h += scale(14f) // divider + gap before total
+    h += textSmall.textSize + scale(9f) // total
+
     val footerLines = wrapLines(footerLabel, textMuted, widthPx - margin * 2)
-    h += footerLines.size * (textMuted.textSize + 6f) + 12f
-    return (h + 24f).toInt().coerceAtLeast(200)
+    h += scale(12f) + footerLines.size * (textMuted.textSize + scale(6f)) + scale(16f)
+    return (h + scale(36f)).toInt().coerceAtLeast(240)
   }
 
   private fun drawCenteredText(canvas: Canvas, text: String, paint: TextPaint, y: Float) {
@@ -203,12 +232,13 @@ class ReceiptRenderer(private val context: Context) {
     paint: TextPaint,
     y: Float,
     maxWidth: Float,
+    lineGap: Float,
   ) {
     val lines = wrapLines(text, paint, maxWidth)
     var yCursor = y
     lines.forEach { line ->
       drawCenteredText(canvas, line, paint, yCursor + paint.textSize)
-      yCursor += paint.textSize + 6f
+      yCursor += paint.textSize + lineGap
     }
   }
 
@@ -225,7 +255,7 @@ class ReceiptRenderer(private val context: Context) {
     val labelText = toEnglishDigits(label)
     val valueText = toEnglishDigits(value)
     val labelY = y + labelPaint.textSize
-    val valueY = labelY + valuePaint.textSize + 4f
+    val valueY = labelY + valuePaint.textSize + scale(4f)
     if (alignRight) {
       canvas.drawText(labelText, x - labelPaint.measureText(labelText), labelY, labelPaint)
       canvas.drawText(valueText, x - valuePaint.measureText(valueText), valueY, valuePaint)
@@ -241,10 +271,11 @@ class ReceiptRenderer(private val context: Context) {
     rightText: String,
     y: Float,
     paint: TextPaint,
+    rowGap: Float,
   ): Float {
     val price = toEnglishDigits(rightText)
     val priceWidth = paint.measureText(price)
-    val leftWidth = widthPx - margin * 2 - priceWidth - 8f
+    val leftWidth = (widthPx - margin * 2 - priceWidth - scale(10f)).coerceAtLeast(scale(120f))
     val lines = wrapLines(leftText, paint, leftWidth)
     var yCursor = y
     lines.forEachIndexed { idx, line ->
@@ -253,7 +284,7 @@ class ReceiptRenderer(private val context: Context) {
       if (idx == 0) {
         canvas.drawText(price, widthPx - margin - priceWidth, lineY, paint)
       }
-      yCursor += paint.textSize + 6f
+      yCursor += paint.textSize + rowGap
     }
     return yCursor
   }
@@ -264,6 +295,7 @@ class ReceiptRenderer(private val context: Context) {
     value: Double,
     y: Float,
     paint: TextPaint,
+    rowGap: Float,
     bold: Boolean,
   ): Float {
     val labelText = label
@@ -282,7 +314,7 @@ class ReceiptRenderer(private val context: Context) {
     canvas.drawText(labelText, margin, lineY, labelPaint)
     val valueWidth = valuePaint.measureText(valueText)
     canvas.drawText(toEnglishDigits(valueText), widthPx - margin - valueWidth, lineY, valuePaint)
-    return y + paint.textSize + 8f
+    return y + paint.textSize + rowGap
   }
 
   private fun formatDateTime(ts: Long): Pair<String, String> {

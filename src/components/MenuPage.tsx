@@ -277,6 +277,28 @@ export function MenuPage({
     setTimeout(() => setLastAddedId(null), 1000);
   };
 
+  const changeItemQuantity = (item: MenuItem, delta: number) => {
+    if (!delta) return;
+    setCart((prevCart) => {
+      const existingItem = prevCart.find((cartItem) => cartItem.id === item.id);
+      if (!existingItem && delta < 0) return prevCart;
+      if (existingItem) {
+        const nextQty = existingItem.quantity + delta;
+        if (nextQty <= 0) {
+          return prevCart.filter((cartItem) => cartItem.id !== item.id);
+        }
+        return prevCart.map((cartItem) =>
+          cartItem.id === item.id ? { ...cartItem, quantity: nextQty } : cartItem
+        );
+      }
+      return [...prevCart, { ...item, quantity: Math.max(1, delta) }];
+    });
+  };
+
+  const getItemCartQuantity = (itemId: string) => {
+    return cart.find((cartItem) => cartItem.id === itemId)?.quantity || 0;
+  };
+
   // Image upload helper for admin (in-component scope)
   const uploadImageFile = async (file: File): Promise<string | undefined> => {
     if (!sessionToken || !isAdmin) return;
@@ -917,16 +939,19 @@ export function MenuPage({
               </h2>
 
               <div className="space-y-2.5">
-                {categoryItems.map((item) => (
-                  <div
-                    key={item.id}
-                    className={`bg-[var(--cool-gray)] border transition-all ${
-                      editingItem === item.id
-                        ? 'border-[var(--espresso-brown)]'
-                        : 'border-transparent hover:border-[var(--espresso-brown)] hover:shadow-sm'
-                    } ${!item.available && canEdit ? 'opacity-50' : ''}`}
-                  >
-                    {editingItem === item.id ? (
+                {categoryItems.map((item) => {
+                  const itemQty = getItemCartQuantity(item.id);
+
+                  return (
+                    <div
+                      key={item.id}
+                      className={`bg-[var(--cool-gray)] border transition-all ${
+                        editingItem === item.id
+                          ? 'border-[var(--espresso-brown)]'
+                          : 'border-transparent hover:border-[var(--espresso-brown)] hover:shadow-sm'
+                      } ${!item.available && canEdit ? 'opacity-50' : ''}`}
+                    >
+                      {editingItem === item.id ? (
                       <div className="p-3 space-y-2.5">
                         <div className="flex gap-2">
                           <input
@@ -1068,75 +1093,98 @@ export function MenuPage({
                           </button>
                         </div>
                       </div>
-                    ) : (
-                      <div className="flex items-stretch">
-                        <div className="flex-1 p-3 flex flex-col justify-between min-h-[110px]">
-                          <div>
-                            <h3 className="text-base mb-1">
-                              {language === 'en' ? item.nameEn : item.nameAr}
-                              {canEdit && !item.available && (
-                                <span className="ml-1.5 text-[10px] text-red-600">(Hidden)</span>
-                              )}
-                            </h3>
-                            <p className="text-xs opacity-70 mb-2 line-clamp-2">
-                              {language === 'en' ? item.descriptionEn : item.descriptionAr}
-                            </p>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <div className="text-sm">
-                              {Number(item.price).toFixed(2)} {text.sar}
+                      ) : (
+                        <div className="flex items-stretch">
+                          <div className="flex-1 p-3 flex flex-col justify-between min-h-[110px]">
+                            <div>
+                              <h3 className="text-base mb-1">
+                                {language === 'en' ? item.nameEn : item.nameAr}
+                                {canEdit && !item.available && (
+                                  <span className="ml-1.5 text-[10px] text-red-600">(Hidden)</span>
+                                )}
+                              </h3>
+                              <p className="text-xs opacity-70 mb-2 line-clamp-2">
+                                {language === 'en' ? item.descriptionEn : item.descriptionAr}
+                              </p>
                             </div>
-                            {canEdit ? (
-                              <div className="flex gap-1">
-                                <button
-                                  onClick={() => setEditingItem(item.id)}
-                                  className="px-2.5 py-1 border border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)] hover:border-[var(--espresso-brown)] transition-colors text-[10px]"
-                                >
-                                  <Edit2 size={10} className="inline mr-0.5" />
-                                  Edit
-                                </button>
-                                <button
-                                  onClick={() => toggleAvailability(item.id)}
-                                  className="px-1.5 py-1 border border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)] hover:border-[var(--espresso-brown)] transition-colors text-[10px]"
-                                >
-                                  {item.available ? '👁️' : '🚫'}
-                                </button>
-                                <button
-                                  onClick={() => deleteItem(item.id)}
-                                  className="px-1.5 py-1 border border-[var(--matte-black)] hover:bg-red-600 hover:text-[var(--crisp-white)] hover:border-red-600 transition-colors text-[10px]"
-                                >
-                                  <Trash2 size={10} />
-                                </button>
+                            <div className="flex items-center justify-between">
+                              <div className="text-sm">
+                                {Number(item.price).toFixed(2)} {text.sar}
                               </div>
-                            ) : canOrder && item.available ? (
-                              <button
-                                onClick={() => addToCart(item)}
-                                className="px-5 py-1.5 border border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)] hover:border-[var(--espresso-brown)] transition-colors text-xs"
-                              >
-                                {lastAddedId === item.id
-                                  ? language === 'en'
-                                    ? 'Added ✓'
-                                    : 'تمت الإضافة ✓'
-                                  : language === 'en'
-                                    ? 'ADD'
-                                    : 'أضف'}
-                              </button>
-                            ) : null}
+                              {canEdit ? (
+                                <div className="flex gap-1">
+                                  <button
+                                    onClick={() => setEditingItem(item.id)}
+                                    className="px-2.5 py-1 border border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)] hover:border-[var(--espresso-brown)] transition-colors text-[10px]"
+                                  >
+                                    <Edit2 size={10} className="inline mr-0.5" />
+                                    Edit
+                                  </button>
+                                  <button
+                                    onClick={() => toggleAvailability(item.id)}
+                                    className="px-1.5 py-1 border border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)] hover:border-[var(--espresso-brown)] transition-colors text-[10px]"
+                                  >
+                                    {item.available ? '👁️' : '🚫'}
+                                  </button>
+                                  <button
+                                    onClick={() => deleteItem(item.id)}
+                                    className="px-1.5 py-1 border border-[var(--matte-black)] hover:bg-red-600 hover:text-[var(--crisp-white)] hover:border-red-600 transition-colors text-[10px]"
+                                  >
+                                    <Trash2 size={10} />
+                                  </button>
+                                </div>
+                              ) : canOrder && item.available ? (
+                                itemQty > 0 ? (
+                                  <div className="flex items-center border border-[var(--matte-black)] bg-[var(--crisp-white)]">
+                                    <button
+                                      onClick={() => changeItemQuantity(item, -1)}
+                                      className="w-8 h-8 text-sm border-r border-[var(--matte-black)] hover:bg-[var(--cool-gray)] transition-colors"
+                                      aria-label={language === 'en' ? 'Decrease quantity' : 'تقليل الكمية'}
+                                    >
+                                      -
+                                    </button>
+                                    <div className="min-w-[28px] px-2 text-center text-xs font-medium">
+                                      {itemQty}
+                                    </div>
+                                    <button
+                                      onClick={() => addToCart(item)}
+                                      className="w-8 h-8 text-sm border-l border-[var(--matte-black)] hover:bg-[var(--cool-gray)] transition-colors"
+                                      aria-label={language === 'en' ? 'Increase quantity' : 'زيادة الكمية'}
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => addToCart(item)}
+                                    className="px-5 py-1.5 border border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)] hover:border-[var(--espresso-brown)] transition-colors text-xs"
+                                  >
+                                    {lastAddedId === item.id
+                                      ? language === 'en'
+                                        ? 'Added ✓'
+                                        : 'تمت الإضافة ✓'
+                                      : language === 'en'
+                                        ? 'ADD'
+                                        : 'أضف'}
+                                  </button>
+                                )
+                              ) : null}
+                            </div>
                           </div>
+                          {item.imageUrl && (
+                            <div className="w-28 flex-shrink-0 bg-[var(--matte-black)] bg-opacity-10">
+                              <img
+                                src={resolveImageUrl(item.imageUrl)}
+                                alt={language === 'en' ? item.nameEn : item.nameAr}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                          )}
                         </div>
-                        {item.imageUrl && (
-                          <div className="w-28 flex-shrink-0 bg-[var(--matte-black)] bg-opacity-10">
-                            <img
-                              src={resolveImageUrl(item.imageUrl)}
-                              alt={language === 'en' ? item.nameEn : item.nameAr}
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                      )}
+                    </div>
+                  );
+                })}
 
                 {canEdit && activeCategory === category.id && (
                   <>

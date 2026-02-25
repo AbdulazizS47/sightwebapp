@@ -36,6 +36,10 @@ class MainActivity : AppCompatActivity() {
   }
   private val fixedServerUrl = "https://api.sightcoffeespace.com"
   private val fixedDeviceKey = "1234"
+  private val receiptWidthOptions = listOf(
+    StatusKeys.RECEIPT_WIDTH_80MM to R.string.receipt_size_80,
+    StatusKeys.RECEIPT_WIDTH_58MM to R.string.receipt_size_58,
+  )
   private lateinit var queueAdapter: OrderQueueAdapter
   private var lastQueueJson: String? = null
 
@@ -68,8 +72,10 @@ class MainActivity : AppCompatActivity() {
     binding.queueList.adapter = queueAdapter
     updateQueue(OrderQueue.load(prefs))
 
+    migrateReceiptProfileIfNeeded()
     ensureRuntimePermissions()
     loadPairedPrinters()
+    setupReceiptSizeSelector()
 
     binding.connectButton.setOnClickListener {
       if (printer.isConnected()) disconnectPrinter() else connectPrinter()
@@ -109,8 +115,10 @@ class MainActivity : AppCompatActivity() {
           val client = PrintClient(normalized, deviceKey)
           client.ping()
           client.pingDeviceKey()
+          val receiptWidthPx = selectedReceiptWidthPx()
           prefs.edit().putString("serverUrl", normalized).putString("deviceKey", deviceKey).apply()
           prefs.edit().putString("printerAddress", device.address).apply()
+          prefs.edit().putInt(StatusKeys.RECEIPT_WIDTH_PX, receiptWidthPx).apply()
           setServerStatus("OK")
           setServiceStatus("Running")
           ContextCompat.startForegroundService(
@@ -146,7 +154,9 @@ class MainActivity : AppCompatActivity() {
             setPrinterStatus("Connected: ${device.name}")
           }
           prefs.edit().putString("printerAddress", device.address).apply()
-          val renderer = ReceiptRenderer(this@MainActivity)
+          val receiptWidthPx = selectedReceiptWidthPx()
+          prefs.edit().putInt(StatusKeys.RECEIPT_WIDTH_PX, receiptWidthPx).apply()
+          val renderer = ReceiptRenderer(this@MainActivity, targetWidthPx = receiptWidthPx)
           val bitmap = renderer.render(sampleOrder(), loadLogo())
           printBitmap(bitmap)
           playNotificationSound()
@@ -226,11 +236,49 @@ class MainActivity : AppCompatActivity() {
     }
   }
 
+  private fun setupReceiptSizeSelector() {
+    val labels = receiptWidthOptions.map { (_, labelRes) -> getString(labelRes) }
+    val spinner = binding.receiptSizeSpinner
+    spinner.adapter = android.widget.ArrayAdapter(
+      this,
+      android.R.layout.simple_spinner_dropdown_item,
+      labels
+    )
+    val savedWidth = prefs.getInt(
+      StatusKeys.RECEIPT_WIDTH_PX,
+      StatusKeys.DEFAULT_RECEIPT_WIDTH_PX
+    )
+    val selectedIndex = receiptWidthOptions.indexOfFirst { (width, _) -> width == savedWidth }
+    spinner.setSelection(if (selectedIndex >= 0) selectedIndex else 0)
+  }
+
+  private fun migrateReceiptProfileIfNeeded() {
+    val version = prefs.getInt(StatusKeys.RECEIPT_LAYOUT_VERSION, 0)
+    if (version >= StatusKeys.RECEIPT_LAYOUT_VERSION_CURRENT) return
+
+    val savedWidth = prefs.getInt(StatusKeys.RECEIPT_WIDTH_PX, StatusKeys.RECEIPT_WIDTH_58MM)
+    val upgradedWidth = when (savedWidth) {
+      StatusKeys.RECEIPT_WIDTH_58MM -> StatusKeys.RECEIPT_WIDTH_80MM
+      StatusKeys.RECEIPT_WIDTH_80MM -> StatusKeys.RECEIPT_WIDTH_80MM
+      else -> StatusKeys.DEFAULT_RECEIPT_WIDTH_PX
+    }
+
+    prefs.edit()
+      .putInt(StatusKeys.RECEIPT_WIDTH_PX, upgradedWidth)
+      .putInt(StatusKeys.RECEIPT_LAYOUT_VERSION, StatusKeys.RECEIPT_LAYOUT_VERSION_CURRENT)
+      .apply()
+  }
+
   private fun selectedDevice(): BluetoothDevice? {
     if (!hasBluetoothPermissions()) return null
     val devices = adapter?.bondedDevices?.toList() ?: return null
     val idx = binding.printerSpinner.selectedItemPosition
     return devices.getOrNull(idx)
+  }
+
+  private fun selectedReceiptWidthPx(): Int {
+    val idx = binding.receiptSizeSpinner.selectedItemPosition
+    return receiptWidthOptions.getOrNull(idx)?.first ?: StatusKeys.DEFAULT_RECEIPT_WIDTH_PX
   }
 
   private fun connectPrinter() {
@@ -263,9 +311,17 @@ class MainActivity : AppCompatActivity() {
   private suspend fun printBitmap(bitmap: android.graphics.Bitmap) {
     withContext(Dispatchers.IO) {
       printer.write(EscPos.init())
-      printer.write(EscPos.feed(1))
       printer.write(EscPos.bitmap24(bitmap))
-      printer.write(EscPos.feed(3))
+      printer.write(EscPos.feed(8))
+      try {
+        Thread.sleep(180)
+      } catch (_: InterruptedException) {
+      }
+      try {
+        printer.write(EscPos.cut())
+      } catch (_: Exception) {
+        // Not all thermal printers support cut command.
+      }
     }
   }
 

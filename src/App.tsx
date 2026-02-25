@@ -36,9 +36,9 @@ export default function App() {
   const [language, setLanguage] = useState<Language>(() => {
     try {
       const v = typeof window !== 'undefined' ? window.localStorage.getItem('language') : null;
-      return v === 'ar' || v === 'en' ? v : 'en';
+      return v === 'ar' || v === 'en' ? v : 'ar';
     } catch {
-      return 'en';
+      return 'ar';
     }
   });
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
