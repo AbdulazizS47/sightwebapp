@@ -6,7 +6,7 @@ import { serve } from '@hono/node-server';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { pool, initSchema, getTodayNextDisplayNumber, ensureDatabase } from './db.js';
+import { pool, initSchema, ensureDatabase } from './db.js';
 import { sendOtpSms } from './sms.js';
 
 const app = new Hono();
@@ -302,6 +302,109 @@ async function setSetting(key, value) {
     'INSERT INTO app_settings (`key`, `value`, updatedAt) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE `value`=VALUES(`value`), updatedAt=VALUES(updatedAt)',
     [key, String(value), Date.now()]
   );
+}
+
+const INVENTORY_TYPES = new Set(['bean', 'sweet']);
+const INVENTORY_UNITS = new Set(['g', 'pcs']);
+const BEAN_RESTOCK_OPTIONS_G = [500, 1000];
+
+function slugifyId(input, fallback = 'item') {
+  const base = String(input || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+  return base || fallback;
+}
+
+function parseFiniteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseInventoryType(value) {
+  const type = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (!INVENTORY_TYPES.has(type)) return null;
+  return type;
+}
+
+function parseInventoryUnit(value) {
+  const unit = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (!INVENTORY_UNITS.has(unit)) return null;
+  return unit;
+}
+
+function inferDefaultUnitForInventoryType(type) {
+  if (type === 'bean') return 'g';
+  if (type === 'sweet') return 'pcs';
+  return null;
+}
+
+function isIntegerLike(value) {
+  return Number.isFinite(value) && Math.floor(value) === value;
+}
+
+function validateInventoryTypeUnit(type, unit) {
+  if (!type || !unit) return 'Invalid inventory type or unit';
+  if (type === 'bean' && unit !== 'g') return 'Beans must use grams (g)';
+  if (type === 'sweet' && unit !== 'pcs') return 'Sweets must use pieces (pcs)';
+  return null;
+}
+
+function mapInventoryItemRow(row) {
+  const stockQty = Number(row?.stockQty || 0);
+  const lowStockThreshold = Number(row?.lowStockThreshold || 0);
+  return {
+    id: String(row.id),
+    nameEn: String(row.nameEn || ''),
+    nameAr: String(row.nameAr || ''),
+    type: String(row.type || ''),
+    unit: String(row.unit || ''),
+    stockQty,
+    lowStockThreshold,
+    active: Boolean(Number(row.active)),
+    notes: row.notes != null ? String(row.notes) : null,
+    isLowStock: stockQty <= lowStockThreshold,
+    createdAt: row.createdAt != null ? Number(row.createdAt) : null,
+    updatedAt: row.updatedAt != null ? Number(row.updatedAt) : null,
+  };
+}
+
+function mapInventoryRuleRow(row) {
+  return {
+    id: Number(row.id),
+    menuItemId: String(row.menuItemId),
+    inventoryItemId: String(row.inventoryItemId),
+    consumeQty: Number(row.consumeQty || 0),
+    menuItem: {
+      id: String(row.menuItemId),
+      nameEn: String(row.menuNameEn || ''),
+      nameAr: String(row.menuNameAr || ''),
+      category: row.menuCategory != null ? String(row.menuCategory) : null,
+      available: row.menuAvailable != null ? Boolean(Number(row.menuAvailable)) : null,
+    },
+    inventoryItem: {
+      id: String(row.inventoryItemId),
+      nameEn: String(row.inventoryNameEn || ''),
+      nameAr: String(row.inventoryNameAr || ''),
+      type: row.inventoryType != null ? String(row.inventoryType) : null,
+      unit: row.inventoryUnit != null ? String(row.inventoryUnit) : null,
+      active: row.inventoryActive != null ? Boolean(Number(row.inventoryActive)) : null,
+    },
+    createdAt: row.createdAt != null ? Number(row.createdAt) : null,
+    updatedAt: row.updatedAt != null ? Number(row.updatedAt) : null,
+  };
+}
+
+async function getAdminSessionUserFromRequest(c) {
+  const authHeader = c.req.header('Authorization') || '';
+  const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  const sessionUser = await getSessionUser(bearer);
+  return sessionUser?.role === 'admin' ? sessionUser : null;
 }
 
 // Initialize DB schema
@@ -765,6 +868,519 @@ app.get('/api/admin/menu', async (c) => {
   } catch (e) {
     console.error('Error fetching admin menu', e);
     return c.json({ error: 'Failed to fetch admin menu' }, 500);
+  }
+});
+
+// Admin Inventory: summary (items + rules + menu link warnings)
+app.get('/api/admin/inventory', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const includeUnavailableMenu = String(c.req.query('includeUnavailableMenu') || '')
+      .trim()
+      .toLowerCase() === 'true';
+
+    const [inventoryRows] = await pool.execute(
+      'SELECT * FROM inventory_items ORDER BY active DESC, type ASC, nameEn ASC'
+    );
+    const [ruleRows] = await pool.execute(`
+      SELECT
+        r.*,
+        i.nameEn AS menuNameEn,
+        i.nameAr AS menuNameAr,
+        i.category AS menuCategory,
+        i.available AS menuAvailable,
+        inv.nameEn AS inventoryNameEn,
+        inv.nameAr AS inventoryNameAr,
+        inv.type AS inventoryType,
+        inv.unit AS inventoryUnit,
+        inv.active AS inventoryActive
+      FROM inventory_usage_rules r
+      JOIN items i ON i.id = r.menuItemId
+      JOIN inventory_items inv ON inv.id = r.inventoryItemId
+      ORDER BY i.category ASC, i.nameEn ASC, inv.nameEn ASC
+    `);
+    const [menuRows] = await pool.execute(
+      'SELECT id, nameEn, nameAr, category, available FROM items ORDER BY category ASC, nameEn ASC'
+    );
+    const [unlinkedRows] = await pool.execute(
+      `SELECT i.id, i.nameEn, i.nameAr, i.category, i.available
+       FROM items i
+       LEFT JOIN inventory_usage_rules r ON r.menuItemId = i.id
+       WHERE r.id IS NULL ${includeUnavailableMenu ? '' : 'AND i.available = 1'}
+       ORDER BY i.category ASC, i.nameEn ASC`
+    );
+
+    const inventoryItems = (Array.isArray(inventoryRows) ? inventoryRows : []).map(mapInventoryItemRow);
+    const usageRules = (Array.isArray(ruleRows) ? ruleRows : []).map(mapInventoryRuleRow);
+    const menuItems = (Array.isArray(menuRows) ? menuRows : []).map((r) => ({
+      id: String(r.id),
+      nameEn: String(r.nameEn || ''),
+      nameAr: String(r.nameAr || ''),
+      category: r.category != null ? String(r.category) : null,
+      available: Boolean(Number(r.available)),
+    }));
+    const unlinkedMenuItems = (Array.isArray(unlinkedRows) ? unlinkedRows : []).map((r) => ({
+      id: String(r.id),
+      nameEn: String(r.nameEn || ''),
+      nameAr: String(r.nameAr || ''),
+      category: r.category != null ? String(r.category) : null,
+      available: Boolean(Number(r.available)),
+    }));
+
+    return c.json({
+      success: true,
+      inventoryItems,
+      usageRules,
+      menuItems,
+      unlinkedMenuItems,
+      warnings: {
+        unlinkedInventoryCount: unlinkedMenuItems.length,
+      },
+      restockOptions: {
+        beanG: BEAN_RESTOCK_OPTIONS_G,
+      },
+    });
+  } catch (e) {
+    console.error('Error fetching inventory summary', e);
+    return c.json({ error: 'Failed to fetch inventory summary' }, 500);
+  }
+});
+
+// Admin Inventory: list usage rules only
+app.get('/api/admin/inventory/rules', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const [rows] = await pool.execute(`
+      SELECT
+        r.*,
+        i.nameEn AS menuNameEn,
+        i.nameAr AS menuNameAr,
+        i.category AS menuCategory,
+        i.available AS menuAvailable,
+        inv.nameEn AS inventoryNameEn,
+        inv.nameAr AS inventoryNameAr,
+        inv.type AS inventoryType,
+        inv.unit AS inventoryUnit,
+        inv.active AS inventoryActive
+      FROM inventory_usage_rules r
+      JOIN items i ON i.id = r.menuItemId
+      JOIN inventory_items inv ON inv.id = r.inventoryItemId
+      ORDER BY i.category ASC, i.nameEn ASC, inv.nameEn ASC
+    `);
+    return c.json({
+      success: true,
+      rules: (Array.isArray(rows) ? rows : []).map(mapInventoryRuleRow),
+    });
+  } catch (e) {
+    console.error('Error fetching inventory rules', e);
+    return c.json({ error: 'Failed to fetch inventory rules' }, 500);
+  }
+});
+
+// Admin Inventory Item: create
+app.post('/api/admin/inventory/item', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const nameEn = String(body?.nameEn || '').trim();
+    const nameAr = String(body?.nameAr || '').trim();
+    if (!nameEn || !nameAr) {
+      return c.json({ error: 'nameEn and nameAr are required' }, 400);
+    }
+
+    const type = parseInventoryType(body?.type);
+    if (!type) return c.json({ error: 'Invalid inventory type (bean|sweet)' }, 400);
+    const unit = parseInventoryUnit(body?.unit) || inferDefaultUnitForInventoryType(type);
+    const typeUnitError = validateInventoryTypeUnit(type, unit);
+    if (typeUnitError) return c.json({ error: typeUnitError }, 400);
+
+    const lowStockThresholdNum = parseFiniteNumber(body?.lowStockThreshold ?? 0);
+    if (lowStockThresholdNum == null || lowStockThresholdNum < 0) {
+      return c.json({ error: 'lowStockThreshold must be a non-negative number' }, 400);
+    }
+    if (unit === 'pcs' && !isIntegerLike(lowStockThresholdNum)) {
+      return c.json({ error: 'lowStockThreshold must be a whole number for pcs units' }, 400);
+    }
+
+    const active =
+      body?.active == null ? true : Boolean(body.active);
+    const notes =
+      body?.notes == null ? null : String(body.notes).trim() || null;
+
+    const inputId = String(body?.id || '').trim();
+    const id = inputId || `${slugifyId(nameEn, 'inventory')}-${Math.random().toString(36).slice(2, 8)}`;
+    const now = Date.now();
+
+    await pool.execute(
+      `INSERT INTO inventory_items
+       (id, nameEn, nameAr, type, unit, stockQty, lowStockThreshold, active, notes, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, nameEn, nameAr, type, unit, 0, lowStockThresholdNum, active ? 1 : 0, notes, now, now]
+    );
+
+    return c.json({
+      success: true,
+      item: mapInventoryItemRow({
+        id,
+        nameEn,
+        nameAr,
+        type,
+        unit,
+        stockQty: 0,
+        lowStockThreshold: lowStockThresholdNum,
+        active: active ? 1 : 0,
+        notes,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    });
+  } catch (e) {
+    if (e?.code === 'ER_DUP_ENTRY') {
+      return c.json({ error: 'Inventory item id already exists' }, 409);
+    }
+    console.error('Error creating inventory item', e);
+    return c.json({ error: 'Failed to create inventory item' }, 500);
+  }
+});
+
+// Admin Inventory Item: update metadata (not stock)
+app.put('/api/admin/inventory/item/:id', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const id = String(c.req.param('id') || '').trim();
+    if (!id) return c.json({ error: 'Inventory item id is required' }, 400);
+
+    const body = await c.req.json().catch(() => ({}));
+    const [rows] = await pool.execute('SELECT * FROM inventory_items WHERE id = ? LIMIT 1', [id]);
+    const existing = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    if (!existing) return c.json({ error: 'Inventory item not found' }, 404);
+
+    const has = (key) => Object.prototype.hasOwnProperty.call(body, key);
+
+    const nextNameEn = has('nameEn') ? String(body.nameEn || '').trim() : String(existing.nameEn || '');
+    const nextNameAr = has('nameAr') ? String(body.nameAr || '').trim() : String(existing.nameAr || '');
+    if (!nextNameEn || !nextNameAr) {
+      return c.json({ error: 'nameEn and nameAr are required' }, 400);
+    }
+
+    const nextType = has('type') ? parseInventoryType(body.type) : String(existing.type || '');
+    if (!nextType) return c.json({ error: 'Invalid inventory type (bean|sweet)' }, 400);
+    const nextUnit =
+      has('unit')
+        ? parseInventoryUnit(body.unit)
+        : parseInventoryUnit(existing.unit) || inferDefaultUnitForInventoryType(nextType);
+    const typeUnitError = validateInventoryTypeUnit(nextType, nextUnit);
+    if (typeUnitError) return c.json({ error: typeUnitError }, 400);
+
+    const lowStockThresholdRaw = has('lowStockThreshold')
+      ? body.lowStockThreshold
+      : existing.lowStockThreshold;
+    const nextLowStockThreshold = parseFiniteNumber(lowStockThresholdRaw);
+    if (nextLowStockThreshold == null || nextLowStockThreshold < 0) {
+      return c.json({ error: 'lowStockThreshold must be a non-negative number' }, 400);
+    }
+    if (nextUnit === 'pcs' && !isIntegerLike(nextLowStockThreshold)) {
+      return c.json({ error: 'lowStockThreshold must be a whole number for pcs units' }, 400);
+    }
+
+    const nextActive = has('active') ? Boolean(body.active) : Boolean(Number(existing.active));
+    const nextNotes = has('notes')
+      ? body.notes == null
+        ? null
+        : String(body.notes).trim() || null
+      : existing.notes != null
+        ? String(existing.notes)
+        : null;
+    const now = Date.now();
+
+    await pool.execute(
+      `UPDATE inventory_items
+       SET nameEn = ?, nameAr = ?, type = ?, unit = ?, lowStockThreshold = ?, active = ?, notes = ?, updatedAt = ?
+       WHERE id = ?`,
+      [
+        nextNameEn,
+        nextNameAr,
+        nextType,
+        nextUnit,
+        nextLowStockThreshold,
+        nextActive ? 1 : 0,
+        nextNotes,
+        now,
+        id,
+      ]
+    );
+
+    return c.json({
+      success: true,
+      item: mapInventoryItemRow({
+        ...existing,
+        id,
+        nameEn: nextNameEn,
+        nameAr: nextNameAr,
+        type: nextType,
+        unit: nextUnit,
+        lowStockThreshold: nextLowStockThreshold,
+        active: nextActive ? 1 : 0,
+        notes: nextNotes,
+        updatedAt: now,
+      }),
+    });
+  } catch (e) {
+    console.error('Error updating inventory item', e);
+    return c.json({ error: 'Failed to update inventory item' }, 500);
+  }
+});
+
+// Admin Inventory Item: restock
+app.post('/api/admin/inventory/item/:id/restock', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+
+  const conn = await pool.getConnection();
+  try {
+    const id = String(c.req.param('id') || '').trim();
+    if (!id) return c.json({ error: 'Inventory item id is required' }, 400);
+    const body = await c.req.json().catch(() => ({}));
+    const qty = parseFiniteNumber(body?.qty);
+    if (qty == null || qty <= 0) {
+      return c.json({ error: 'qty must be a positive number' }, 400);
+    }
+
+    const adminUser = await getAdminSessionUserFromRequest(c);
+    const note = body?.note == null ? null : String(body.note).trim() || null;
+
+    await conn.beginTransaction();
+    const [rows] = await conn.execute(
+      'SELECT * FROM inventory_items WHERE id = ? LIMIT 1 FOR UPDATE',
+      [id]
+    );
+    const item = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    if (!item) {
+      await conn.rollback();
+      return c.json({ error: 'Inventory item not found' }, 404);
+    }
+
+    const itemType = String(item.type || '');
+    const itemUnit = String(item.unit || '');
+    if (itemType === 'bean') {
+      if (itemUnit !== 'g') {
+        await conn.rollback();
+        return c.json({ error: 'Bean inventory must use grams (g)' }, 400);
+      }
+      if (!BEAN_RESTOCK_OPTIONS_G.includes(Number(qty))) {
+        await conn.rollback();
+        return c.json({ error: 'Bean restock qty must be 500g or 1000g' }, 400);
+      }
+    }
+    if (itemUnit === 'pcs' && !isIntegerLike(qty)) {
+      await conn.rollback();
+      return c.json({ error: 'qty must be a whole number for pcs units' }, 400);
+    }
+
+    const now = Date.now();
+    const nextStockQty = Number(item.stockQty || 0) + Number(qty);
+
+    await conn.execute(
+      'UPDATE inventory_items SET stockQty = ?, updatedAt = ? WHERE id = ?',
+      [nextStockQty, now, id]
+    );
+    const [movementRes] = await conn.execute(
+      `INSERT INTO inventory_movements
+       (inventoryItemId, direction, qty, reason, orderId, note, createdByUserId, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, 'in', qty, 'restock', null, note, adminUser?.id || null, now]
+    );
+
+    await conn.commit();
+
+    return c.json({
+      success: true,
+      item: mapInventoryItemRow({
+        ...item,
+        stockQty: nextStockQty,
+        updatedAt: now,
+      }),
+      movement: {
+        id: Number(movementRes.insertId || 0),
+        inventoryItemId: id,
+        direction: 'in',
+        qty: Number(qty),
+        reason: 'restock',
+        orderId: null,
+        note,
+        createdByUserId: adminUser?.id || null,
+        createdAt: now,
+      },
+    });
+  } catch (e) {
+    try {
+      await conn.rollback();
+    } catch {}
+    console.error('Error restocking inventory item', e);
+    return c.json({ error: 'Failed to restock inventory item' }, 500);
+  } finally {
+    conn.release();
+  }
+});
+
+// Admin Inventory Rule: create
+app.post('/api/admin/inventory/rule', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const menuItemId = String(body?.menuItemId || '').trim();
+    const inventoryItemId = String(body?.inventoryItemId || '').trim();
+    const consumeQty = parseFiniteNumber(body?.consumeQty);
+
+    if (!menuItemId || !inventoryItemId) {
+      return c.json({ error: 'menuItemId and inventoryItemId are required' }, 400);
+    }
+    if (consumeQty == null || consumeQty <= 0) {
+      return c.json({ error: 'consumeQty must be a positive number' }, 400);
+    }
+
+    const [[menuRows], [inventoryRows]] = await Promise.all([
+      pool.execute('SELECT id, nameEn, nameAr, category, available FROM items WHERE id = ? LIMIT 1', [menuItemId]),
+      pool.execute('SELECT id, type, unit, active, nameEn, nameAr FROM inventory_items WHERE id = ? LIMIT 1', [inventoryItemId]),
+    ]);
+    const menuItem = Array.isArray(menuRows) && menuRows[0] ? menuRows[0] : null;
+    const inventoryItem = Array.isArray(inventoryRows) && inventoryRows[0] ? inventoryRows[0] : null;
+    if (!menuItem) return c.json({ error: 'Menu item not found' }, 404);
+    if (!inventoryItem) return c.json({ error: 'Inventory item not found' }, 404);
+    if (String(inventoryItem.unit || '') === 'pcs' && !isIntegerLike(consumeQty)) {
+      return c.json({ error: 'consumeQty must be a whole number for pcs units' }, 400);
+    }
+
+    const now = Date.now();
+    const [res] = await pool.execute(
+      `INSERT INTO inventory_usage_rules (menuItemId, inventoryItemId, consumeQty, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?)`,
+      [menuItemId, inventoryItemId, consumeQty, now, now]
+    );
+
+    return c.json({
+      success: true,
+      rule: mapInventoryRuleRow({
+        id: Number(res.insertId || 0),
+        menuItemId,
+        inventoryItemId,
+        consumeQty,
+        menuNameEn: menuItem.nameEn,
+        menuNameAr: menuItem.nameAr,
+        menuCategory: menuItem.category,
+        menuAvailable: menuItem.available,
+        inventoryNameEn: inventoryItem.nameEn,
+        inventoryNameAr: inventoryItem.nameAr,
+        inventoryType: inventoryItem.type,
+        inventoryUnit: inventoryItem.unit,
+        inventoryActive: inventoryItem.active,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    });
+  } catch (e) {
+    if (e?.code === 'ER_DUP_ENTRY') {
+      return c.json({ error: 'Usage rule already exists for this menu item and inventory item' }, 409);
+    }
+    console.error('Error creating inventory usage rule', e);
+    return c.json({ error: 'Failed to create inventory usage rule' }, 500);
+  }
+});
+
+// Admin Inventory Rule: update
+app.put('/api/admin/inventory/rule/:id', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const id = Number(c.req.param('id')) || 0;
+    if (!id) return c.json({ error: 'Invalid rule id' }, 400);
+
+    const body = await c.req.json().catch(() => ({}));
+    const [rows] = await pool.execute(
+      'SELECT * FROM inventory_usage_rules WHERE id = ? LIMIT 1',
+      [id]
+    );
+    const existing = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    if (!existing) return c.json({ error: 'Usage rule not found' }, 404);
+
+    const menuItemId = body?.menuItemId != null ? String(body.menuItemId).trim() : String(existing.menuItemId);
+    const inventoryItemId =
+      body?.inventoryItemId != null ? String(body.inventoryItemId).trim() : String(existing.inventoryItemId);
+    const consumeQty =
+      body?.consumeQty != null ? parseFiniteNumber(body.consumeQty) : Number(existing.consumeQty);
+    if (!menuItemId || !inventoryItemId) {
+      return c.json({ error: 'menuItemId and inventoryItemId are required' }, 400);
+    }
+    if (consumeQty == null || consumeQty <= 0) {
+      return c.json({ error: 'consumeQty must be a positive number' }, 400);
+    }
+
+    const [[menuRows], [inventoryRows]] = await Promise.all([
+      pool.execute('SELECT id, nameEn, nameAr, category, available FROM items WHERE id = ? LIMIT 1', [menuItemId]),
+      pool.execute('SELECT id, type, unit, active, nameEn, nameAr FROM inventory_items WHERE id = ? LIMIT 1', [inventoryItemId]),
+    ]);
+    const menuItem = Array.isArray(menuRows) && menuRows[0] ? menuRows[0] : null;
+    const inventoryItem = Array.isArray(inventoryRows) && inventoryRows[0] ? inventoryRows[0] : null;
+    if (!menuItem) return c.json({ error: 'Menu item not found' }, 404);
+    if (!inventoryItem) return c.json({ error: 'Inventory item not found' }, 404);
+    if (String(inventoryItem.unit || '') === 'pcs' && !isIntegerLike(consumeQty)) {
+      return c.json({ error: 'consumeQty must be a whole number for pcs units' }, 400);
+    }
+
+    const now = Date.now();
+    await pool.execute(
+      `UPDATE inventory_usage_rules
+       SET menuItemId = ?, inventoryItemId = ?, consumeQty = ?, updatedAt = ?
+       WHERE id = ?`,
+      [menuItemId, inventoryItemId, consumeQty, now, id]
+    );
+
+    return c.json({
+      success: true,
+      rule: mapInventoryRuleRow({
+        id,
+        menuItemId,
+        inventoryItemId,
+        consumeQty,
+        menuNameEn: menuItem.nameEn,
+        menuNameAr: menuItem.nameAr,
+        menuCategory: menuItem.category,
+        menuAvailable: menuItem.available,
+        inventoryNameEn: inventoryItem.nameEn,
+        inventoryNameAr: inventoryItem.nameAr,
+        inventoryType: inventoryItem.type,
+        inventoryUnit: inventoryItem.unit,
+        inventoryActive: inventoryItem.active,
+        createdAt: existing.createdAt,
+        updatedAt: now,
+      }),
+    });
+  } catch (e) {
+    if (e?.code === 'ER_DUP_ENTRY') {
+      return c.json({ error: 'Usage rule already exists for this menu item and inventory item' }, 409);
+    }
+    console.error('Error updating inventory usage rule', e);
+    return c.json({ error: 'Failed to update inventory usage rule' }, 500);
+  }
+});
+
+// Admin Inventory Rule: delete
+app.delete('/api/admin/inventory/rule/:id', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const id = Number(c.req.param('id')) || 0;
+    if (!id) return c.json({ error: 'Invalid rule id' }, 400);
+    await pool.execute('DELETE FROM inventory_usage_rules WHERE id = ?', [id]);
+    return c.json({ success: true });
+  } catch (e) {
+    console.error('Error deleting inventory usage rule', e);
+    return c.json({ error: 'Failed to delete inventory usage rule' }, 500);
   }
 });
 
@@ -1257,37 +1873,231 @@ app.post('/api/orders/create', async (c) => {
     }
 
     const dateKey = await getCurrentDateKey();
-    const displayNumber = await getTodayNextDisplayNumber(dateKey);
-    const orderNumber = `${dateKey}-${String(displayNumber).padStart(3, '0')}`;
-    const orderId = `order:${orderNumber}`;
+    const paymentMethodValue = paymentMethod || 'cash';
+    const roundInventoryQty = (value) => Math.round(Number(value || 0) * 100) / 100;
 
-    const createdAt = Date.now();
-    await pool.execute(
-      'INSERT INTO orders (id, orderNumber, displayNumber, dateKey, userId, phoneNumber, items, total, paymentMethod, status, completedAt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [
-        orderId,
-        orderNumber,
-        displayNumber,
-        dateKey,
-        effectiveUserId,
-        effectivePhoneNumber,
-        JSON.stringify(effectiveItems),
-        effectiveTotal,
-        paymentMethod || 'cash',
-        'received',
-        null,
-        createdAt,
-      ]
-    );
+    let displayNumber = null;
+    let orderNumber = null;
+    let orderId = null;
+    let createdAt = null;
+    let inventoryWarnings = null;
 
-    // Enqueue print job (best-effort)
+    const conn = await pool.getConnection();
+    let txOpen = false;
     try {
-      await pool.execute(
-        'INSERT INTO print_jobs (orderId, status, attempts, createdAt) VALUES (?, ?, ?, ?)',
-        [orderId, 'pending', 0, createdAt]
+      await conn.beginTransaction();
+      txOpen = true;
+
+      const [usageRows] =
+        ids.length > 0
+          ? await conn.execute(
+              `SELECT menuItemId, inventoryItemId, consumeQty
+               FROM inventory_usage_rules
+               WHERE menuItemId IN (${placeholders})`,
+              ids
+            )
+          : [[]];
+
+      const rulesByMenuItemId = new Map();
+      for (const row of Array.isArray(usageRows) ? usageRows : []) {
+        const menuItemId = String(row.menuItemId || '');
+        const inventoryItemId = String(row.inventoryItemId || '');
+        const consumeQty = Number(row.consumeQty || 0);
+        if (!menuItemId || !inventoryItemId || !Number.isFinite(consumeQty) || consumeQty <= 0) {
+          continue;
+        }
+        const arr = rulesByMenuItemId.get(menuItemId) || [];
+        arr.push({ inventoryItemId, consumeQty });
+        rulesByMenuItemId.set(menuItemId, arr);
+      }
+
+      const seenUnlinked = new Set();
+      const unlinkedMenuItemIds = [];
+      const inventoryRequirements = new Map();
+      for (const item of normalizedItems) {
+        const rules = rulesByMenuItemId.get(item.id) || [];
+        if (rules.length === 0) {
+          if (!seenUnlinked.has(item.id)) {
+            seenUnlinked.add(item.id);
+            unlinkedMenuItemIds.push(item.id);
+          }
+          continue;
+        }
+
+        for (const rule of rules) {
+          const requiredQty = roundInventoryQty(Number(rule.consumeQty) * Number(item.quantity || 0));
+          if (!Number.isFinite(requiredQty) || requiredQty <= 0) continue;
+
+          const existing = inventoryRequirements.get(rule.inventoryItemId);
+          if (existing) {
+            existing.requiredQty = roundInventoryQty(existing.requiredQty + requiredQty);
+          } else {
+            inventoryRequirements.set(rule.inventoryItemId, {
+              inventoryItemId: rule.inventoryItemId,
+              requiredQty,
+            });
+          }
+        }
+      }
+
+      if (unlinkedMenuItemIds.length > 0) {
+        inventoryWarnings = { unlinkedMenuItemIds };
+      }
+
+      const lockedInventoryById = new Map();
+      if (inventoryRequirements.size > 0) {
+        const inventoryIds = Array.from(inventoryRequirements.keys());
+        const inventoryPlaceholders = inventoryIds.map(() => '?').join(',');
+        const [inventoryRows] = await conn.execute(
+          `SELECT id, nameEn, nameAr, unit, stockQty, active
+           FROM inventory_items
+           WHERE id IN (${inventoryPlaceholders})
+           FOR UPDATE`,
+          inventoryIds
+        );
+
+        for (const row of Array.isArray(inventoryRows) ? inventoryRows : []) {
+          lockedInventoryById.set(String(row.id), row);
+        }
+
+        const missingInventoryIds = inventoryIds.filter((id) => !lockedInventoryById.has(id));
+        if (missingInventoryIds.length > 0) {
+          await conn.rollback();
+          txOpen = false;
+          return c.json(
+            {
+              error: 'Inventory configuration is invalid',
+              missingInventoryIds,
+              ...(inventoryWarnings ? { inventoryWarnings } : {}),
+            },
+            500
+          );
+        }
+
+        const insufficient = [];
+        for (const requirement of inventoryRequirements.values()) {
+          const inventoryRow = lockedInventoryById.get(requirement.inventoryItemId);
+          if (!inventoryRow) continue;
+          const stockQty = Number(inventoryRow.stockQty || 0);
+          const requiredQty = roundInventoryQty(requirement.requiredQty);
+          const shortageQty = roundInventoryQty(requiredQty - stockQty);
+          if (shortageQty > 0) {
+            insufficient.push({
+              inventoryItemId: String(inventoryRow.id),
+              nameEn: String(inventoryRow.nameEn || ''),
+              nameAr: String(inventoryRow.nameAr || ''),
+              unit: String(inventoryRow.unit || ''),
+              stockQty,
+              requiredQty,
+              shortageQty,
+              active: Boolean(Number(inventoryRow.active)),
+            });
+          }
+        }
+
+        if (insufficient.length > 0) {
+          await conn.rollback();
+          txOpen = false;
+          return c.json(
+            {
+              error: 'Insufficient inventory',
+              insufficient,
+              ...(inventoryWarnings ? { inventoryWarnings } : {}),
+            },
+            409
+          );
+        }
+      }
+
+      const [counterRes] = await conn.execute(
+        'INSERT INTO order_counters (dateKey, currentNumber) VALUES (?, 1) ON DUPLICATE KEY UPDATE currentNumber = LAST_INSERT_ID(currentNumber + 1)',
+        [dateKey]
       );
-    } catch (e) {
-      console.error('Failed to enqueue print job', e);
+      displayNumber = Number(counterRes.insertId || 1);
+      orderNumber = `${dateKey}-${String(displayNumber).padStart(3, '0')}`;
+      orderId = `order:${orderNumber}`;
+      createdAt = Date.now();
+
+      await conn.execute(
+        'INSERT INTO orders (id, orderNumber, displayNumber, dateKey, userId, phoneNumber, items, total, paymentMethod, status, completedAt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          orderId,
+          orderNumber,
+          displayNumber,
+          dateKey,
+          effectiveUserId,
+          effectivePhoneNumber,
+          JSON.stringify(effectiveItems),
+          effectiveTotal,
+          paymentMethodValue,
+          'received',
+          null,
+          createdAt,
+        ]
+      );
+
+      if (inventoryRequirements.size > 0) {
+        for (const requirement of inventoryRequirements.values()) {
+          const inventoryRow = lockedInventoryById.get(requirement.inventoryItemId);
+          if (!inventoryRow) continue;
+          const nextStockQty = roundInventoryQty(
+            Number(inventoryRow.stockQty || 0) - Number(requirement.requiredQty || 0)
+          );
+
+          await conn.execute(
+            'UPDATE inventory_items SET stockQty = ?, updatedAt = ? WHERE id = ?',
+            [nextStockQty, createdAt, requirement.inventoryItemId]
+          );
+          await conn.execute(
+            `INSERT INTO inventory_movements
+             (inventoryItemId, direction, qty, reason, orderId, note, createdByUserId, createdAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              requirement.inventoryItemId,
+              'out',
+              roundInventoryQty(requirement.requiredQty),
+              'sale',
+              orderId,
+              null,
+              null,
+              createdAt,
+            ]
+          );
+
+          inventoryRow.stockQty = nextStockQty;
+        }
+      }
+
+      // Enqueue print job (best-effort)
+      try {
+        await conn.execute(
+          'INSERT INTO print_jobs (orderId, status, attempts, createdAt) VALUES (?, ?, ?, ?)',
+          [orderId, 'pending', 0, createdAt]
+        );
+      } catch (e) {
+        console.error('Failed to enqueue print job', e);
+      }
+
+      await conn.commit();
+      txOpen = false;
+    } catch (txError) {
+      if (txOpen) {
+        try {
+          await conn.rollback();
+        } catch (rollbackError) {
+          console.error('Failed to rollback order transaction', rollbackError);
+        }
+      }
+      throw txError;
+    } finally {
+      conn.release();
+    }
+
+    if (inventoryWarnings?.unlinkedMenuItemIds?.length) {
+      console.warn('Order created with unlinked inventory items', {
+        orderId,
+        menuItemIds: inventoryWarnings.unlinkedMenuItemIds,
+      });
     }
 
     // Loyalty: automatically enable after first order and accrue stamps
@@ -1323,13 +2133,18 @@ app.post('/api/orders/create', async (c) => {
       status: 'received',
     };
 
-    return c.json({
+    const responsePayload = {
       success: true,
       orderId,
       orderNumber,
       displayNumber,
       order: orderSummary,
-    });
+    };
+    if (inventoryWarnings) {
+      responsePayload.inventoryWarnings = inventoryWarnings;
+    }
+
+    return c.json(responsePayload);
   } catch (e) {
     console.error('Error creating order', e);
     return c.json({ error: 'Failed to create order' }, 500);

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Users, ClipboardList, Utensils, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Users, ClipboardList, Utensils, RefreshCw, Package } from 'lucide-react';
 import { AdminPanel } from './AdminPanel';
+import { AdminInventoryPanel } from './AdminInventoryPanel';
 import { apiBaseUrl } from '../utils/supabase/info';
 
 interface AdminDashboardProps {
@@ -9,7 +10,7 @@ interface AdminDashboardProps {
   language: 'en' | 'ar';
 }
 
-type Tab = 'live-orders' | 'history' | 'menu' | 'customers' | 'settings';
+type Tab = 'live-orders' | 'history' | 'menu' | 'inventory' | 'customers' | 'settings';
 
 interface CustomerSummary {
   customerKey?: string | null;
@@ -45,6 +46,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
           tab === 'live-orders' ||
           tab === 'history' ||
           tab === 'menu' ||
+          tab === 'inventory' ||
           tab === 'customers' ||
           tab === 'settings'
         ) {
@@ -83,6 +85,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       ordersTab: 'Live Orders',
       historyTab: 'Order History',
       menuTab: 'Menu',
+      inventoryTab: 'Inventory',
       customersTab: 'Customers',
       settingsTab: 'Settings',
       refresh: 'Refresh',
@@ -125,6 +128,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       ordersTab: 'الطلبات المباشرة',
       historyTab: 'سجل الطلبات',
       menuTab: 'القائمة',
+      inventoryTab: 'المخزون',
       customersTab: 'العملاء',
       settingsTab: 'الإعدادات',
       refresh: 'تحديث',
@@ -258,8 +262,8 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
     <div className="min-h-screen bg-[var(--crisp-white)]" dir={isRTL ? 'rtl' : 'ltr'}>
       {/* Header */}
       <div className="sticky top-0 bg-[var(--crisp-white)] border-b-2 border-[var(--matte-black)] z-10">
-        <div className="flex items-center justify-between p-6">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-6">
+          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
             <button
               onClick={onBack}
               className="text-[var(--matte-black)] hover:text-[var(--espresso-brown)] transition-colors"
@@ -267,7 +271,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
             >
               <ArrowLeft size={24} className={isRTL ? 'rotate-180' : ''} />
             </button>
-            <h1 className="text-xl text-[var(--matte-black)]">{text.title}</h1>
+            <h1 className="text-lg sm:text-xl text-[var(--matte-black)]">{text.title}</h1>
           </div>
           {activeTab === 'customers' && (
             <button
@@ -312,7 +316,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
                 }
               }}
               disabled={cleanupLoading}
-              className="text-[var(--matte-black)] hover:text-[var(--espresso-brown)] transition-colors disabled:opacity-50 text-sm"
+              className="text-[var(--matte-black)] hover:text-[var(--espresso-brown)] transition-colors disabled:opacity-50 text-xs sm:text-sm"
               aria-label={text.cleanupDemo}
             >
               {cleanupLoading ? '...' : text.cleanupDemo}
@@ -322,7 +326,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
 
         {/* Quick stats */}
         {stats && (
-          <div className="px-6 pb-4">
+          <div className="px-4 sm:px-6 pb-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="border-2 border-[var(--matte-black)] p-3 bg-[var(--crisp-white)]">
                 <div className="text-[10px] uppercase tracking-wider text-[var(--matte-black)] opacity-60">
@@ -370,9 +374,10 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
         )}
 
         {/* Tabs */}
-        <div className="px-6 pb-4 flex gap-2 border-t border-[var(--matte-black)]">
+        <div className="px-4 sm:px-6 pb-4 border-t border-[var(--matte-black)] overflow-x-auto">
+          <div className="flex gap-2 min-w-max">
           <button
-            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 ${activeTab === 'live-orders' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
+            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 whitespace-nowrap shrink-0 ${activeTab === 'live-orders' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
             onClick={() => setTab('live-orders')}
           >
             <ClipboardList size={16} />
@@ -384,35 +389,42 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
             )}
           </button>
           <button
-            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 ${activeTab === 'history' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
+            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 whitespace-nowrap shrink-0 ${activeTab === 'history' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
             onClick={() => setTab('history')}
           >
             <ClipboardList size={16} />
             <span>{text.historyTab}</span>
           </button>
           <button
-            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 ${activeTab === 'menu' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
+            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 whitespace-nowrap shrink-0 ${activeTab === 'menu' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
             onClick={() => setTab('menu')}
           >
             <Utensils size={16} /> {text.menuTab}
           </button>
           <button
-            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 ${activeTab === 'customers' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
+            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 whitespace-nowrap shrink-0 ${activeTab === 'inventory' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
+            onClick={() => setTab('inventory')}
+          >
+            <Package size={16} /> {text.inventoryTab}
+          </button>
+          <button
+            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 whitespace-nowrap shrink-0 ${activeTab === 'customers' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
             onClick={() => setTab('customers')}
           >
             <Users size={16} /> {text.customersTab}
           </button>
           <button
-            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 ${activeTab === 'settings' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
+            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 whitespace-nowrap shrink-0 ${activeTab === 'settings' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
             onClick={() => setTab('settings')}
           >
             {text.settingsTab}
           </button>
+          </div>
         </div>
       </div>
 
       {/* Content */}
-      <div className="p-6">
+      <div className="p-3 sm:p-6">
         {activeTab === 'live-orders' && (
           <AdminPanel
             onBack={onBack}
@@ -445,21 +457,24 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
             limitedControl={true}
           />
         )}
+        {activeTab === 'inventory' && (
+          <AdminInventoryPanel sessionToken={sessionToken} language={language} />
+        )}
         {activeTab === 'customers' && (
           <div>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-3">
               <input
                 value={customerQuery}
                 onChange={(e) => setCustomerQuery(e.target.value)}
                 placeholder={
                   language === 'en' ? 'Search phone / name / order #' : 'بحث: هاتف / اسم / رقم طلب'
                 }
-                className="px-3 py-2 border-2 border-[var(--matte-black)] text-sm w-full max-w-md"
+                className="px-3 py-2 border-2 border-[var(--matte-black)] text-sm w-full sm:max-w-md"
               />
               <button
                 onClick={loadCustomers}
                 disabled={loading}
-                className="ml-3 px-3 py-2 border-2 border-[var(--matte-black)] text-sm hover:bg-[var(--cool-gray)] transition-colors disabled:opacity-60"
+                className="sm:ml-3 px-3 py-2 border-2 border-[var(--matte-black)] text-sm hover:bg-[var(--cool-gray)] transition-colors disabled:opacity-60"
               >
                 {text.refresh}
               </button>

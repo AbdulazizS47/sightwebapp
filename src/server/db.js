@@ -194,6 +194,54 @@ export async function initSchema() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
+  // Inventory foundation (Phase 1)
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS inventory_items (
+      id VARCHAR(64) PRIMARY KEY,
+      nameEn VARCHAR(255) NOT NULL,
+      nameAr VARCHAR(255) NOT NULL,
+      type VARCHAR(16) NOT NULL,
+      unit VARCHAR(16) NOT NULL,
+      stockQty DECIMAL(12,2) NOT NULL DEFAULT 0,
+      lowStockThreshold DECIMAL(12,2) NOT NULL DEFAULT 0,
+      active TINYINT(1) NOT NULL DEFAULT 1,
+      notes TEXT NULL,
+      createdAt BIGINT NOT NULL,
+      updatedAt BIGINT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS inventory_usage_rules (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      menuItemId VARCHAR(64) NOT NULL,
+      inventoryItemId VARCHAR(64) NOT NULL,
+      consumeQty DECIMAL(12,2) NOT NULL,
+      createdAt BIGINT NOT NULL,
+      updatedAt BIGINT NOT NULL,
+      UNIQUE KEY uq_inventory_usage_menu_inventory (menuItemId, inventoryItemId),
+      FOREIGN KEY (menuItemId) REFERENCES items(id) ON DELETE CASCADE,
+      FOREIGN KEY (inventoryItemId) REFERENCES inventory_items(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS inventory_movements (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      inventoryItemId VARCHAR(64) NOT NULL,
+      direction VARCHAR(8) NOT NULL,
+      qty DECIMAL(12,2) NOT NULL,
+      reason VARCHAR(32) NOT NULL,
+      orderId VARCHAR(64) NULL,
+      note TEXT NULL,
+      createdByUserId VARCHAR(64) NULL,
+      createdAt BIGINT NOT NULL,
+      FOREIGN KEY (inventoryItemId) REFERENCES inventory_items(id) ON DELETE CASCADE,
+      FOREIGN KEY (orderId) REFERENCES orders(id) ON DELETE SET NULL,
+      FOREIGN KEY (createdByUserId) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS otp_codes (
       id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -243,6 +291,17 @@ export async function initSchema() {
   await ensureIndex('CREATE INDEX idx_orders_phoneNumber ON orders(phoneNumber)');
   await ensureIndex('CREATE INDEX idx_print_jobs_status_created ON print_jobs(status, createdAt)');
   await ensureIndex('CREATE INDEX idx_print_jobs_orderId ON print_jobs(orderId)');
+  await ensureIndex('CREATE INDEX idx_inventory_items_type_active ON inventory_items(type, active)');
+  await ensureIndex('CREATE INDEX idx_inventory_items_nameEn ON inventory_items(nameEn)');
+  await ensureIndex('CREATE INDEX idx_inventory_usage_menu ON inventory_usage_rules(menuItemId)');
+  await ensureIndex('CREATE INDEX idx_inventory_usage_inventory ON inventory_usage_rules(inventoryItemId)');
+  await ensureIndex(
+    'CREATE INDEX idx_inventory_movements_item_created ON inventory_movements(inventoryItemId, createdAt)'
+  );
+  await ensureIndex('CREATE INDEX idx_inventory_movements_orderId ON inventory_movements(orderId)');
+  await ensureIndex(
+    'CREATE INDEX idx_inventory_movements_reason_created ON inventory_movements(reason, createdAt)'
+  );
 }
 
 export async function getTodayNextDisplayNumber(dateKey) {
