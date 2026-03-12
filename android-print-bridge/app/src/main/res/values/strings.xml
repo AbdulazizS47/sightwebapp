@@ -7,6 +7,7 @@
   <string name="receipt_size_58">Receipt 58mm (Compact)</string>
   <string name="receipt_size_80">Receipt 80mm (Large)</string>
   <string name="connect">Connect</string>
+  <string name="search_printers">Search Printers</string>
   <string name="disconnect">Disconnect</string>
   <string name="test_print">Test Print</string>
   <string name="start">Start</string>

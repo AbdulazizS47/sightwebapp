@@ -3,8 +3,10 @@ package sight.printbridge
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
-import android.content.pm.PackageManager
+import android.content.BroadcastReceiver
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -23,6 +25,11 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import sight.printbridge.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
+  private companion object {
+    const val REQUEST_BLUETOOTH_PERMISSIONS = 100
+    const val REQUEST_NOTIFICATION_PERMISSION = 101
+  }
+
   private lateinit var binding: ActivityMainBinding
   private val adapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
   private val printer = PrinterManager()
@@ -42,8 +49,36 @@ class MainActivity : AppCompatActivity() {
   )
   private lateinit var queueAdapter: OrderQueueAdapter
   private var lastQueueJson: String? = null
+  private val availableDevices = mutableListOf<BluetoothDevice>()
+  private var isDiscoveryReceiverRegistered = false
+  private var isDiscoveryRunning = false
 
   private val prefs by lazy { getSharedPreferences(StatusKeys.PREFS, MODE_PRIVATE) }
+  private val discoveryReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: android.content.Context?, intent: Intent?) {
+      when (intent?.action) {
+        BluetoothAdapter.ACTION_DISCOVERY_STARTED -> {
+          isDiscoveryRunning = true
+          setPrinterStatus("Searching printers...")
+        }
+        BluetoothDevice.ACTION_FOUND -> {
+          val device = extractBluetoothDevice(intent) ?: return
+          addOrUpdateDevice(device)
+          renderDeviceSpinner()
+          setPrinterStatus("Searching printers... (${availableDevices.size})")
+        }
+        BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
+          isDiscoveryRunning = false
+          if (availableDevices.isEmpty()) {
+            setPrinterStatus("No printers found")
+            setError("No paired/found printers. Pair printer in tablet Bluetooth settings, then tap Search Printers.")
+          } else {
+            setPrinterStatus("Ready (${availableDevices.size} found)")
+          }
+        }
+      }
+    }
+  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -73,9 +108,26 @@ class MainActivity : AppCompatActivity() {
     updateQueue(OrderQueue.load(prefs))
 
     migrateReceiptProfileIfNeeded()
+    registerDiscoveryReceiverIfNeeded()
     ensureRuntimePermissions()
-    loadPairedPrinters()
     setupReceiptSizeSelector()
+    if (hasBluetoothPermissions()) {
+      loadKnownPrinters()
+      startPrinterDiscovery()
+    } else {
+      setPrinterStatus("Bluetooth permission required")
+      setError("Allow Nearby devices permission, then tap Search Printers.")
+    }
+
+    binding.refreshPrintersButton.setOnClickListener {
+      if (!hasBluetoothPermissions()) {
+        ensureRuntimePermissions()
+        setPrinterStatus("Bluetooth permission required")
+        return@setOnClickListener
+      }
+      loadKnownPrinters()
+      startPrinterDiscovery()
+    }
 
     binding.connectButton.setOnClickListener {
       if (printer.isConnected()) disconnectPrinter() else connectPrinter()
@@ -178,6 +230,13 @@ class MainActivity : AppCompatActivity() {
   override fun onStop() {
     super.onStop()
     statusHandler.removeCallbacks(statusRunnable)
+    stopPrinterDiscovery()
+  }
+
+  override fun onDestroy() {
+    super.onDestroy()
+    stopPrinterDiscovery()
+    unregisterDiscoveryReceiverIfNeeded()
   }
 
   override fun onRequestPermissionsResult(
@@ -186,53 +245,186 @@ class MainActivity : AppCompatActivity() {
     grantResults: IntArray,
   ) {
     super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-    if (requestCode == 100) {
-      val allGranted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
-      if (allGranted) {
-        loadPairedPrinters()
-      } else {
-        setError("Bluetooth/notification permission required")
+    when (requestCode) {
+      REQUEST_BLUETOOTH_PERMISSIONS -> {
+        val allGranted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+        if (allGranted) {
+          loadKnownPrinters()
+          startPrinterDiscovery()
+        } else {
+          setError("Bluetooth permission required")
+          setPrinterStatus("Bluetooth permission required")
+        }
+      }
+      REQUEST_NOTIFICATION_PERMISSION -> {
+        val granted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+        if (!granted) {
+          setError("Notification permission denied. Printing still works.")
+        }
       }
     }
   }
 
   private fun ensureRuntimePermissions() {
-    val needed = mutableListOf<String>()
+    val bluetoothNeeded = mutableListOf<String>()
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       if (!hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
-        needed.add(Manifest.permission.BLUETOOTH_CONNECT)
+        bluetoothNeeded.add(Manifest.permission.BLUETOOTH_CONNECT)
       }
       if (!hasPermission(Manifest.permission.BLUETOOTH_SCAN)) {
-        needed.add(Manifest.permission.BLUETOOTH_SCAN)
+        bluetoothNeeded.add(Manifest.permission.BLUETOOTH_SCAN)
       }
+    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
+        bluetoothNeeded.add(Manifest.permission.ACCESS_FINE_LOCATION)
+      }
+    }
+    if (bluetoothNeeded.isNotEmpty()) {
+      ActivityCompat.requestPermissions(
+        this,
+        bluetoothNeeded.toTypedArray(),
+        REQUEST_BLUETOOTH_PERMISSIONS,
+      )
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       if (!hasPermission(Manifest.permission.POST_NOTIFICATIONS)) {
-        needed.add(Manifest.permission.POST_NOTIFICATIONS)
+        ActivityCompat.requestPermissions(
+          this,
+          arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+          REQUEST_NOTIFICATION_PERMISSION,
+        )
       }
-    }
-    if (needed.isNotEmpty()) {
-      ActivityCompat.requestPermissions(this, needed.toTypedArray(), 100)
     }
   }
 
-  private fun loadPairedPrinters() {
+  private fun loadKnownPrinters() {
     if (!hasBluetoothPermissions()) {
       setError("Bluetooth permission required")
       return
     }
-    val devices = adapter?.bondedDevices?.toList() ?: emptyList()
-    val names = devices.map { "${it.name ?: "Device"} (${it.address})" }
-    val spinner = binding.printerSpinner
-    spinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, names)
+    val btAdapter = adapter
+    if (btAdapter == null) {
+      setError("Bluetooth is not supported on this tablet")
+      setPrinterStatus("Bluetooth unavailable")
+      return
+    }
+    if (!btAdapter.isEnabled) {
+      setError("Bluetooth is turned off")
+      setPrinterStatus("Enable Bluetooth and tap Search Printers")
+      return
+    }
 
+    availableDevices.clear()
+    btAdapter.bondedDevices?.forEach { addOrUpdateDevice(it) }
+    renderDeviceSpinner()
+
+    if (availableDevices.isNotEmpty()) {
+      setPrinterStatus("Ready (${availableDevices.size} paired)")
+    } else {
+      setPrinterStatus("No paired printers")
+    }
+  }
+
+  private fun startPrinterDiscovery() {
+    if (!hasBluetoothPermissions()) {
+      ensureRuntimePermissions()
+      setError("Bluetooth permission required")
+      return
+    }
+    val btAdapter = adapter
+    if (btAdapter == null) {
+      setError("Bluetooth is not supported on this tablet")
+      setPrinterStatus("Bluetooth unavailable")
+      return
+    }
+    if (!btAdapter.isEnabled) {
+      setError("Bluetooth is turned off")
+      setPrinterStatus("Enable Bluetooth and tap Search Printers")
+      return
+    }
+
+    try {
+      if (btAdapter.isDiscovering) {
+        btAdapter.cancelDiscovery()
+      }
+      if (btAdapter.startDiscovery()) {
+        isDiscoveryRunning = true
+        setPrinterStatus("Searching printers...")
+      } else if (availableDevices.isEmpty()) {
+        setPrinterStatus("No printers found")
+      }
+    } catch (_: SecurityException) {
+      setError("Bluetooth permission required")
+      setPrinterStatus("Bluetooth permission required")
+      ensureRuntimePermissions()
+    }
+  }
+
+  private fun stopPrinterDiscovery() {
+    if (!isDiscoveryRunning) return
+    try {
+      adapter?.cancelDiscovery()
+    } catch (_: SecurityException) {
+    }
+    isDiscoveryRunning = false
+  }
+
+  private fun registerDiscoveryReceiverIfNeeded() {
+    if (isDiscoveryReceiverRegistered) return
+    val filter = IntentFilter().apply {
+      addAction(BluetoothAdapter.ACTION_DISCOVERY_STARTED)
+      addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+      addAction(BluetoothDevice.ACTION_FOUND)
+    }
+    ContextCompat.registerReceiver(
+      this,
+      discoveryReceiver,
+      filter,
+      ContextCompat.RECEIVER_EXPORTED,
+    )
+    isDiscoveryReceiverRegistered = true
+  }
+
+  private fun unregisterDiscoveryReceiverIfNeeded() {
+    if (!isDiscoveryReceiverRegistered) return
+    try {
+      unregisterReceiver(discoveryReceiver)
+    } catch (_: Exception) {
+    }
+    isDiscoveryReceiverRegistered = false
+  }
+
+  private fun addOrUpdateDevice(device: BluetoothDevice) {
+    val index = availableDevices.indexOfFirst { it.address == device.address }
+    if (index >= 0) {
+      availableDevices[index] = device
+    } else {
+      availableDevices.add(device)
+    }
+  }
+
+  private fun renderDeviceSpinner() {
+    val names = availableDevices.map { "${it.name ?: "Device"} (${it.address})" }
+    binding.printerSpinner.adapter = android.widget.ArrayAdapter(
+      this,
+      android.R.layout.simple_spinner_dropdown_item,
+      names,
+    )
     val savedAddress = prefs.getString("printerAddress", null)
     if (savedAddress != null) {
-      val index = devices.indexOfFirst { it.address == savedAddress }
-      if (index >= 0) spinner.setSelection(index)
+      val index = availableDevices.indexOfFirst { it.address == savedAddress }
+      if (index >= 0) {
+        binding.printerSpinner.setSelection(index)
+      }
     }
-    if (devices.isNotEmpty()) {
-      setPrinterStatus("Ready")
+  }
+
+  @Suppress("DEPRECATION")
+  private fun extractBluetoothDevice(intent: Intent): BluetoothDevice? {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+    } else {
+      intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
     }
   }
 
@@ -271,9 +463,8 @@ class MainActivity : AppCompatActivity() {
 
   private fun selectedDevice(): BluetoothDevice? {
     if (!hasBluetoothPermissions()) return null
-    val devices = adapter?.bondedDevices?.toList() ?: return null
     val idx = binding.printerSpinner.selectedItemPosition
-    return devices.getOrNull(idx)
+    return availableDevices.getOrNull(idx)
   }
 
   private fun selectedReceiptWidthPx(): Int {
@@ -399,15 +590,15 @@ class MainActivity : AppCompatActivity() {
     }
   }
 
-  private fun hasBluetoothConnectPermission(): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
-    return hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
-  }
-
   private fun hasBluetoothPermissions(): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
-    return hasPermission(Manifest.permission.BLUETOOTH_CONNECT) &&
-      hasPermission(Manifest.permission.BLUETOOTH_SCAN)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      return hasPermission(Manifest.permission.BLUETOOTH_CONNECT) &&
+        hasPermission(Manifest.permission.BLUETOOTH_SCAN)
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      return hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+    }
+    return true
   }
 
   private fun hasPermission(name: String): Boolean {

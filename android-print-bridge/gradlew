@@ -8,4 +8,4 @@ else
   JAVA_CMD="$JAVA_HOME/bin/java"
 fi
 
-exec "$JAVA_CMD" -jar "$GRADLE_WRAPPER_DIR/gradle/wrapper/gradle-wrapper.jar" "$@"
+exec "$JAVA_CMD" -classpath "$GRADLE_WRAPPER_DIR/gradle/wrapper/gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain "$@"

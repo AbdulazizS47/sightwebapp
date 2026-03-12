@@ -26,9 +26,7 @@ class ReceiptRenderer(
   private fun loadArabicTypeface(): Pair<Typeface, Boolean> {
     val typeface = try {
       context.assets.open("fonts/Cairo-Regular.ttf").close()
-      Typeface.createFromAsset(context.assets, "fonts/Cairo-Regular.ttf"==p[=-[p=--[
-        []
-      ]]]
+      Typeface.createFromAsset(context.assets, "fonts/Cairo-Regular.ttf")
     } catch (_: Exception) {
       Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
     }
