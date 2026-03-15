@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Coffee, Gift, Sparkles } from 'lucide-react';
+import { ArrowLeft, Coffee, Gift, Receipt, Sparkles } from 'lucide-react';
 import { apiBaseUrl } from '../utils/supabase/info';
 
 interface User {
@@ -14,6 +14,23 @@ interface Loyalty {
   points: number;
   tier: string;
   enrollmentDate: number | null;
+}
+
+interface OrderItem {
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+interface PreviousOrder {
+  id: string;
+  orderNumber: string;
+  displayNumber?: number;
+  status: 'received' | 'completed';
+  paymentMethod: string;
+  createdAt: number;
+  items: OrderItem[];
+  totalWithVat: number;
 }
 
 interface ProfilePageProps {
@@ -38,6 +55,9 @@ export function ProfilePage({
   // Loyalty state
   const [loyalty, setLoyalty] = useState<Loyalty | null>(null);
   const [loyaltyLoading, setLoyaltyLoading] = useState(false);
+  const [orders, setOrders] = useState<PreviousOrder[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
 
   const isRTL = language === 'ar';
   const isAdmin = user?.role === 'admin';
@@ -68,6 +88,19 @@ export function ProfilePage({
       stamps: 'Stamps',
       loyaltyFetchFailed: 'Failed to load loyalty',
       loyaltyUpdateFailed: 'Failed to update loyalty',
+      previousOrders: 'Previous Orders',
+      previousOrdersHint: 'Your recent orders appear here.',
+      noOrders: 'No previous orders yet.',
+      ordersLoading: 'Loading orders...',
+      ordersFailed: 'Failed to load orders',
+      items: 'Items',
+      total: 'Total',
+      status: 'Status',
+      received: 'Received',
+      completed: 'Completed',
+      payOnPickup: 'Pay on pickup',
+      orderPlaced: 'Order placed',
+      sar: 'SAR',
     },
     ar: {
       title: 'الملف الشخصي',
@@ -94,10 +127,27 @@ export function ProfilePage({
       stamps: 'الطوابع',
       loyaltyFetchFailed: 'فشل تحميل بيانات الولاء',
       loyaltyUpdateFailed: 'فشل تحديث بيانات الولاء',
+      previousOrders: 'الطلبات السابقة',
+      previousOrdersHint: 'ستظهر طلباتك الأخيرة هنا.',
+      noOrders: 'لا توجد طلبات سابقة بعد.',
+      ordersLoading: 'جاري تحميل الطلبات...',
+      ordersFailed: 'فشل تحميل الطلبات',
+      items: 'العناصر',
+      total: 'الإجمالي',
+      status: 'الحالة',
+      received: 'تم الاستلام',
+      completed: 'مكتمل',
+      payOnPickup: 'الدفع عند الوصول',
+      orderPlaced: 'تاريخ الطلب',
+      sar: 'ريال',
     },
   } as const;
 
   const text = content[language];
+
+  useEffect(() => {
+    setName(user?.name || '');
+  }, [user?.name]);
 
   const saveProfile = async () => {
     if (!sessionToken || !user) return;
@@ -153,6 +203,28 @@ export function ProfilePage({
     }
   };
 
+  const loadOrders = async () => {
+    if (!sessionToken) return;
+    setOrdersLoading(true);
+    setOrdersError(null);
+    try {
+      const res = await fetch(`${apiBaseUrl}/orders/my?limit=20`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error || text.ordersFailed);
+      }
+      const nextOrders = Array.isArray(json.orders) ? json.orders : [];
+      setOrders(nextOrders);
+    } catch (e: any) {
+      console.error('Orders fetch error', e);
+      setOrdersError(e?.message || text.ordersFailed);
+    } finally {
+      setOrdersLoading(false);
+    }
+  };
+
   const points = Number(loyalty?.points || 0);
   const stamps = loyalty?.enabled && points > 0 ? ((points - 1) % 6) + 1 : 0;
   const rewardAvailable = stamps === 3 || stamps === 6;
@@ -163,6 +235,25 @@ export function ProfilePage({
   useEffect(() => {
     loadLoyalty();
   }, [sessionToken]);
+
+  useEffect(() => {
+    loadOrders();
+  }, [sessionToken]);
+
+  const formatCurrency = (value: number) => `${Number(value || 0).toFixed(2)} ${text.sar}`;
+  const formatOrderDate = (value: number) =>
+    new Date(value).toLocaleString(language === 'ar' ? 'ar-SA' : 'en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+  const getPaymentLabel = (paymentMethod: string) =>
+    paymentMethod === 'pickup' || paymentMethod === 'pay_on_pickup' || paymentMethod === 'cash'
+      ? text.payOnPickup
+      : paymentMethod;
 
   return (
     <div className="min-h-screen bg-[var(--crisp-white)]" dir={isRTL ? 'rtl' : 'ltr'}>
@@ -327,6 +418,100 @@ export function ProfilePage({
                 <div className="mt-3 text-[10px] text-[var(--matte-black)] opacity-50">...</div>
               )}
             </div>
+          </div>
+        </div>
+
+        <div className="border border-[var(--matte-black)] bg-[var(--crisp-white)]">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--matte-black)] bg-[var(--cool-gray)]">
+            <Receipt size={16} className="text-[var(--espresso-brown)]" />
+            <div>
+              <div className="text-sm text-[var(--matte-black)]">{text.previousOrders}</div>
+              <div className="text-[11px] text-[var(--matte-black)] opacity-60">
+                {text.previousOrdersHint}
+              </div>
+            </div>
+          </div>
+
+          <div className="p-3">
+            {ordersLoading ? (
+              <div className="text-sm text-[var(--matte-black)] opacity-60">
+                {text.ordersLoading}
+              </div>
+            ) : ordersError ? (
+              <div className="text-sm text-red-600">{ordersError}</div>
+            ) : orders.length === 0 ? (
+              <div className="text-sm text-[var(--matte-black)] opacity-60">{text.noOrders}</div>
+            ) : (
+              <div className="space-y-3">
+                {orders.map((order) => (
+                  <div
+                    key={order.id}
+                    className="border border-[var(--matte-black)] bg-white p-3 space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-mono text-lg leading-none text-[var(--matte-black)]">
+                          #{order.displayNumber ?? order.orderNumber.split('-')[1]}
+                        </div>
+                        <div className="mt-1 text-[10px] font-mono text-[var(--matte-black)] opacity-60">
+                          {order.orderNumber}
+                        </div>
+                      </div>
+                      <div
+                        className={
+                          `px-2 py-1 text-[10px] border ` +
+                          (order.status === 'completed'
+                            ? 'border-green-700 text-green-700 bg-green-50'
+                            : 'border-[var(--espresso-brown)] text-[var(--espresso-brown)] bg-[var(--cool-gray)]')
+                        }
+                      >
+                        {order.status === 'completed' ? text.completed : text.received}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 text-xs text-[var(--matte-black)]">
+                      <div>
+                        <div className="opacity-50 mb-1">{text.orderPlaced}</div>
+                        <div>{formatOrderDate(order.createdAt)}</div>
+                      </div>
+                      <div className={isRTL ? 'text-left' : 'text-right'}>
+                        <div className="opacity-50 mb-1">{text.total}</div>
+                        <div className="text-[var(--espresso-brown)]">
+                          {formatCurrency(order.totalWithVat)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-[11px] text-[var(--matte-black)] opacity-50 mb-2">
+                        {text.items}
+                      </div>
+                      <div className="space-y-1.5">
+                        {order.items.map((item, index) => (
+                          <div
+                            key={`${order.id}-${index}`}
+                            className="flex justify-between gap-3 text-xs text-[var(--matte-black)]"
+                          >
+                            <span className="truncate">
+                              {item.quantity}× {item.name}
+                            </span>
+                            <span className="shrink-0">
+                              {formatCurrency(Number(item.price) * Number(item.quantity))}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-[var(--matte-black)] text-[11px] text-[var(--matte-black)] opacity-60">
+                      {text.status}: {order.status === 'completed' ? text.completed : text.received}
+                      {' · '}
+                      {getPaymentLabel(order.paymentMethod)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
