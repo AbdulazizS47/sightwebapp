@@ -97,10 +97,16 @@ const CORS_ORIGINS = (process.env.CORS_ORIGINS || '')
   .map((s) => s.trim())
   .filter(Boolean);
 const DEFAULT_DEV_CORS_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+const DEFAULT_PROD_CORS_ORIGINS = [
+  'https://sightcoffeespace.com',
+  'https://www.sightcoffeespace.com',
+];
 const EFFECTIVE_CORS_ORIGINS = (() => {
   const configured = new Set(CORS_ORIGINS);
   if (!IS_PRODUCTION) {
     for (const origin of DEFAULT_DEV_CORS_ORIGINS) configured.add(origin);
+  } else {
+    for (const origin of DEFAULT_PROD_CORS_ORIGINS) configured.add(origin);
   }
   if (PUBLIC_BASE_URL) {
     try {
