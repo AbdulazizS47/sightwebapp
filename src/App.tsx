@@ -116,7 +116,9 @@ export default function App() {
       });
 
       if (!response.ok) {
-        console.error('Session verification failed:', response.status, response.statusText);
+        if (response.status !== 401) {
+          console.error('Session verification failed:', response.status, response.statusText);
+        }
         localStorage.removeItem('sessionToken');
         return;
       }
@@ -132,16 +134,18 @@ export default function App() {
         //   setCurrentPage('admin');
         // }
       } else {
-        console.error('Session verification returned error:', data.error);
+        if (data.error !== 'Invalid session') {
+          console.error('Session verification returned error:', data.error);
+        }
         localStorage.removeItem('sessionToken');
       }
     } catch (error) {
-      console.error('Error verifying session:', error);
       // Don't remove token on network errors - might be temporary
       // Only clear if it's a clear auth failure
       if (error instanceof TypeError && (error as any).message?.includes('Load failed')) {
         console.warn('Network error during session verification - session token preserved');
       } else {
+        console.error('Error verifying session:', error);
         localStorage.removeItem('sessionToken');
       }
     }
