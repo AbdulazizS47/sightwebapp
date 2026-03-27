@@ -22,6 +22,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.net.UnknownHostException
+import javax.net.ssl.SSLHandshakeException
 import sight.printbridge.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
@@ -41,8 +43,6 @@ class MainActivity : AppCompatActivity() {
       statusHandler.postDelayed(this, 1000)
     }
   }
-  private val fixedServerUrl = "https://api.sightcoffeespace.com"
-  private val fixedDeviceKey = "1234"
   private val receiptWidthOptions = listOf(
     StatusKeys.RECEIPT_WIDTH_80MM to R.string.receipt_size_80,
     StatusKeys.RECEIPT_WIDTH_58MM to R.string.receipt_size_58,
@@ -85,14 +85,9 @@ class MainActivity : AppCompatActivity() {
     binding = ActivityMainBinding.inflate(layoutInflater)
     setContentView(binding.root)
 
-    binding.serverUrl.setText(fixedServerUrl)
-    binding.deviceKey.setText(fixedDeviceKey)
-    binding.serverUrl.isEnabled = false
-    binding.deviceKey.isEnabled = false
-    prefs.edit()
-      .putString("serverUrl", fixedServerUrl)
-      .putString("deviceKey", fixedDeviceKey)
-      .apply()
+    binding.serverUrl.setText(prefs.getString("serverUrl", "") ?: "")
+    binding.deviceKey.visibility = View.GONE
+    binding.deviceKey.setText("Built-in")
     setServiceStatus("Idle")
     setServerStatus(prefs.getString(StatusKeys.SERVER_STATUS, "-") ?: "-")
     setPrinterStatus(prefs.getString(StatusKeys.PRINTER_STATUS, "-") ?: "-")
@@ -134,8 +129,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     binding.startButton.setOnClickListener {
-      val serverInput = fixedServerUrl
-      val deviceKey = fixedDeviceKey
+      val serverInput = binding.serverUrl.text?.toString().orEmpty()
+      val deviceKey = PrintBridgeConfig.fixedDeviceKey
       if (!hasBluetoothPermissions()) {
         ensureRuntimePermissions()
         setError("Bluetooth permission required")
@@ -154,6 +149,11 @@ class MainActivity : AppCompatActivity() {
         setServerStatus("Invalid URL")
         return@setOnClickListener
       }
+      if (!PrintBridgeConfig.hasValidFixedDeviceKey()) {
+        setError("Built-in device key is invalid (${deviceKey.length}/16). Update the app build config.")
+        setServerStatus("Invalid built-in key")
+        return@setOnClickListener
+      }
       if (normalized.startsWith("http://") && !isLocalHost(normalized)) {
         setError("Use https for public domains")
         setServerStatus("Use https for public domains")
@@ -168,7 +168,7 @@ class MainActivity : AppCompatActivity() {
           client.ping()
           client.pingDeviceKey()
           val receiptWidthPx = selectedReceiptWidthPx()
-          prefs.edit().putString("serverUrl", normalized).putString("deviceKey", deviceKey).apply()
+          prefs.edit().putString("serverUrl", normalized).remove("deviceKey").apply()
           prefs.edit().putString("printerAddress", device.address).apply()
           prefs.edit().putInt(StatusKeys.RECEIPT_WIDTH_PX, receiptWidthPx).apply()
           setServerStatus("OK")
@@ -179,7 +179,7 @@ class MainActivity : AppCompatActivity() {
           )
         } catch (e: Exception) {
           setServerStatus("Error")
-          setError("Server check failed: ${e.message}")
+          setError(errorMessage(e))
           setServiceStatus("Stopped")
         }
       }
@@ -611,6 +611,7 @@ class MainActivity : AppCompatActivity() {
       orderNumber = "20260101-001",
       displayNumber = 1,
       createdAt = System.currentTimeMillis(),
+      userName = "Demo User",
       phoneNumber = "9665568222800",
       paymentMethod = "cash",
       status = "received",
@@ -645,7 +646,25 @@ class MainActivity : AppCompatActivity() {
       "https://$trimmed"
     }
     val url = candidate.toHttpUrlOrNull() ?: return null
-    return url.newBuilder().build().toString().trimEnd('/')
+    val normalizedHost = when {
+      url.host == "apl.sightcoffeespace.com" -> "api.sightcoffeespace.com"
+      url.host.startsWith("apl.") -> "api." + url.host.removePrefix("apl.")
+      else -> url.host
+    }
+    val cleanPath = when (url.encodedPath.lowercase()) {
+      "/api", "/api/", "/apl", "/apl/", "/" -> "/"
+      else -> url.encodedPath
+    }
+    return try {
+      url.newBuilder()
+        .host(normalizedHost)
+        .encodedPath(cleanPath)
+        .build()
+        .toString()
+        .trimEnd('/')
+    } catch (_: IllegalArgumentException) {
+      null
+    }
   }
 
   private fun isLocalHost(url: String): Boolean {
@@ -660,5 +679,25 @@ class MainActivity : AppCompatActivity() {
       return second in 16..31
     }
     return false
+  }
+
+  private fun errorMessage(e: Exception): String {
+    val base = when (e) {
+      is UnknownHostException -> "DNS error: can't resolve host"
+      is SSLHandshakeException -> "TLS error: check HTTPS"
+      is ApiException -> {
+        val code = e.code?.toString() ?: "HTTP error"
+        val body = e.body?.let { truncate(it, 120) }
+        val url = e.url?.let { " @ ${truncate(it, 80)}" } ?: ""
+        if (body.isNullOrBlank()) "$code$url" else "$code$url: $body"
+      }
+      else -> e.message ?: "Unknown error"
+    }
+    return "Server check failed: ${truncate(base, 160)}"
+  }
+
+  private fun truncate(value: String, max: Int): String {
+    if (value.length <= max) return value
+    return value.take(max) + "..."
   }
 }

@@ -186,6 +186,7 @@ export async function initSchema() {
       orderId VARCHAR(64) NOT NULL,
       status VARCHAR(16) NOT NULL DEFAULT 'pending',
       attempts INT NOT NULL DEFAULT 0,
+      claimToken VARCHAR(64) NULL,
       lastError TEXT NULL,
       claimedAt BIGINT NULL,
       printedAt BIGINT NULL,
@@ -289,8 +290,10 @@ export async function initSchema() {
   await ensureIndex('CREATE INDEX idx_orders_completedAt ON orders(completedAt)');
   await ensureIndex('CREATE INDEX idx_orders_userId ON orders(userId)');
   await ensureIndex('CREATE INDEX idx_orders_phoneNumber ON orders(phoneNumber)');
+  await ensureColumn('ALTER TABLE print_jobs ADD COLUMN claimToken VARCHAR(64) NULL');
   await ensureIndex('CREATE INDEX idx_print_jobs_status_created ON print_jobs(status, createdAt)');
   await ensureIndex('CREATE INDEX idx_print_jobs_orderId ON print_jobs(orderId)');
+  await ensureIndex('CREATE INDEX idx_print_jobs_claimToken ON print_jobs(claimToken)');
   await ensureIndex('CREATE INDEX idx_inventory_items_type_active ON inventory_items(type, active)');
   await ensureIndex('CREATE INDEX idx_inventory_items_nameEn ON inventory_items(nameEn)');
   await ensureIndex('CREATE INDEX idx_inventory_usage_menu ON inventory_usage_rules(menuItemId)');

@@ -31,8 +31,6 @@ class PrintService : Service() {
   private val printer = PrinterManager()
   private val prefs by lazy { getSharedPreferences(StatusKeys.PREFS, MODE_PRIVATE) }
   private var errorStreak = 0
-  private val fixedServerUrl = "https://api.sightcoffeespace.com"
-  private val fixedDeviceKey = "1234"
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -47,13 +45,21 @@ class PrintService : Service() {
     migrateReceiptProfileIfNeeded()
 
     job = scope.launch {
-      val serverUrl = fixedServerUrl
-      val deviceKey = fixedDeviceKey
+      val serverUrl = prefs.getString("serverUrl", "") ?: ""
+      val deviceKey = PrintBridgeConfig.fixedDeviceKey
       val printerAddress = prefs.getString("printerAddress", "") ?: ""
 
-      if (serverUrl.isBlank() || deviceKey.isBlank() || printerAddress.isBlank()) {
+      if (serverUrl.isBlank() || printerAddress.isBlank()) {
         updateNotification("Missing config")
         setServiceStatus("Config missing")
+        stopSelf()
+        return@launch
+      }
+      if (!PrintBridgeConfig.hasValidFixedDeviceKey()) {
+        updateNotification("Invalid built-in key")
+        setServerStatus("Invalid built-in key")
+        setError("Built-in device key is invalid (${deviceKey.length}/16). Update the app build config.")
+        setServiceStatus("Stopped")
         stopSelf()
         return@launch
       }
@@ -131,14 +137,14 @@ class PrintService : Service() {
               withContext(Dispatchers.IO) {
                 printBitmapSafe(bitmap, printerAddress, beep = false)
               }
-              ackWithRetry(client, job.id)
+              ackWithRetry(client, job.id, job.claimToken)
               setPrinterStatus("Printed ${job.order.orderNumber}")
               setLastOrder(job.order.orderNumber)
               updateNotification("Printed ${job.order.orderNumber}")
             } catch (e: Exception) {
               logError("Print failed for job ${job.id}", e)
               try {
-                client.fail(job.id, e.message ?: "Print failed", true)
+                client.fail(job.id, job.claimToken, e.message ?: "Print failed")
               } catch (failError: Exception) {
                 logError("Fail report failed for job ${job.id}", failError)
               }
@@ -355,12 +361,12 @@ class PrintService : Service() {
       .apply()
   }
 
-  private suspend fun ackWithRetry(client: PrintClient, jobId: Long) {
+  private suspend fun ackWithRetry(client: PrintClient, jobId: Long, claimToken: String) {
     var attempt = 0
     var lastError: Exception? = null
     while (attempt < 3) {
       try {
-        client.ack(jobId)
+        client.ack(jobId, claimToken)
         return
       } catch (e: Exception) {
         lastError = e
@@ -391,7 +397,6 @@ class PrintService : Service() {
     }
     return false
   }
-
   private fun hasBluetoothPermissions(): Boolean {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
     return checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
@@ -407,7 +412,25 @@ class PrintService : Service() {
       "https://$trimmed"
     }
     val url = candidate.toHttpUrlOrNull() ?: return null
-    return url.newBuilder().build().toString().trimEnd('/')
+    val normalizedHost = when {
+      url.host == "apl.sightcoffeespace.com" -> "api.sightcoffeespace.com"
+      url.host.startsWith("apl.") -> "api." + url.host.removePrefix("apl.")
+      else -> url.host
+    }
+    val cleanPath = when (url.encodedPath.lowercase()) {
+      "/api", "/api/", "/apl", "/apl/", "/" -> "/"
+      else -> url.encodedPath
+    }
+    return try {
+      url.newBuilder()
+        .host(normalizedHost)
+        .encodedPath(cleanPath)
+        .build()
+        .toString()
+        .trimEnd('/')
+    } catch (_: IllegalArgumentException) {
+      null
+    }
   }
 
   private fun isLocalHost(url: String): Boolean {

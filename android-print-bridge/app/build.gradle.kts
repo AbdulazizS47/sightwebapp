@@ -13,6 +13,11 @@ android {
     targetSdk = 35
     versionCode = 1
     versionName = "1.0.0"
+    buildConfigField(
+      "String",
+      "FIXED_DEVICE_KEY",
+      "\"10c455da1e66cbea75db336e916786818b666c9e13323668\""
+    )
   }
 
   buildTypes {

@@ -11,13 +11,15 @@ import { sendOtpSms } from './sms.js';
 
 const app = new Hono();
 const printApi = new Hono();
+const NODE_ENV = (process.env.NODE_ENV || 'development').trim().toLowerCase();
+const IS_PRODUCTION = NODE_ENV === 'production';
 
 app.use(
   '*',
   cors({
     origin: (origin) => {
-      const allowed = CORS_ORIGINS;
-      if (!allowed.length) return '*';
+      const allowed = EFFECTIVE_CORS_ORIGINS;
+      if (!allowed.length) return undefined;
       if (!origin) return undefined;
       return allowed.includes(origin) ? origin : undefined;
     },
@@ -35,8 +37,13 @@ app.use('*', logger());
 
 const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || '').trim();
 const ADMIN_PHONE = process.env.ADMIN_PHONE || '0547444145';
-const OTP_DEV_MODE = (process.env.OTP_DEV_MODE || '').trim() === 'true';
-const PRINT_DEVICE_KEY = (process.env.PRINT_DEVICE_KEY || '').trim();
+const OTP_DEV_MODE_CONFIGURED = (process.env.OTP_DEV_MODE || '').trim() === 'true';
+const OTP_DEV_MODE = OTP_DEV_MODE_CONFIGURED && !IS_PRODUCTION;
+const FIXED_TABLET_DEVICE_KEY = '10c455da1e66cbea75db336e916786818b666c9e13323668';
+const PRINT_DEVICE_KEYS = (process.env.PRINT_DEVICE_KEY || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 const OTP_TTL_MS = Math.max(
   Number(process.env.OTP_TTL_MS || 5 * 60 * 1000) || 5 * 60 * 1000,
   60 * 1000
@@ -89,6 +96,21 @@ const CORS_ORIGINS = (process.env.CORS_ORIGINS || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+const DEFAULT_DEV_CORS_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+const EFFECTIVE_CORS_ORIGINS = (() => {
+  const configured = new Set(CORS_ORIGINS);
+  if (!IS_PRODUCTION) {
+    for (const origin of DEFAULT_DEV_CORS_ORIGINS) configured.add(origin);
+  }
+  if (PUBLIC_BASE_URL) {
+    try {
+      configured.add(new URL(PUBLIC_BASE_URL).origin);
+    } catch {
+      // ignore invalid PUBLIC_BASE_URL here; request handling will fall back safely
+    }
+  }
+  return Array.from(configured);
+})();
 const EXT_TO_IMAGE_CONTENT_TYPE = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -108,11 +130,66 @@ const sessions = new Map();
 const logStartupWarning = (message) => {
   console.warn(`[startup] ${message}`);
 };
-if (!PRINT_DEVICE_KEY) {
+
+function isStrongSharedSecret(value) {
+  return String(value || '').trim().length >= 16;
+}
+
+const ADMIN_TOKEN_ENABLED = ADMIN_TOKEN && isStrongSharedSecret(ADMIN_TOKEN);
+const ACCEPTED_PRINT_DEVICE_KEYS = Array.from(
+  new Set([...PRINT_DEVICE_KEYS, FIXED_TABLET_DEVICE_KEY].filter(isStrongSharedSecret))
+);
+const PRINT_DEVICE_KEY_ENABLED = ACCEPTED_PRINT_DEVICE_KEYS.length > 0;
+
+if (ADMIN_TOKEN && !ADMIN_TOKEN_ENABLED) {
+  logStartupWarning('ADMIN_TOKEN is set but too short; header-based admin fallback has been disabled.');
+}
+if (!PRINT_DEVICE_KEYS.length) {
   logStartupWarning('PRINT_DEVICE_KEY is not set; print bridge will not be able to claim jobs.');
+}
+if (PRINT_DEVICE_KEYS.length > 0 && !PRINT_DEVICE_KEYS.some(isStrongSharedSecret)) {
+  logStartupWarning('PRINT_DEVICE_KEY is too short; print bridge authentication has been disabled.');
+}
+if (OTP_DEV_MODE_CONFIGURED && IS_PRODUCTION) {
+  logStartupWarning('OTP_DEV_MODE was requested but has been disabled because NODE_ENV=production.');
 }
 if (SMS_PROVIDER === 'console' && !OTP_DEV_MODE) {
   logStartupWarning('SMS_PROVIDER is "console"; OTPs will be logged to stdout.');
+}
+
+function hashSessionToken(token) {
+  return crypto.createHash('sha256').update(`session:${token}`).digest('hex');
+}
+
+function getSessionTokenLookupValues(token) {
+  const raw = String(token || '').trim();
+  if (!raw) return [];
+  const hashed = hashSessionToken(raw);
+  return hashed === raw ? [raw] : [hashed, raw];
+}
+
+async function deleteSessionRecord(token) {
+  const values = getSessionTokenLookupValues(token);
+  if (!values.length) return;
+  const placeholders = values.map(() => '?').join(',');
+  await pool.execute(`DELETE FROM sessions WHERE token IN (${placeholders})`, values);
+}
+
+async function touchSessionRecord(token, lastSeenAt, expiresAt = null) {
+  const values = getSessionTokenLookupValues(token);
+  if (!values.length) return;
+  const placeholders = values.map(() => '?').join(',');
+  if (expiresAt == null) {
+    await pool.execute(
+      `UPDATE sessions SET lastSeenAt = ? WHERE token IN (${placeholders})`,
+      [lastSeenAt, ...values]
+    );
+    return;
+  }
+  await pool.execute(
+    `UPDATE sessions SET lastSeenAt = ?, expiresAt = ? WHERE token IN (${placeholders})`,
+    [lastSeenAt, expiresAt, ...values]
+  );
 }
 
 async function getSessionUser(token) {
@@ -123,30 +200,37 @@ async function getSessionUser(token) {
     if (cached.expiresAt && cached.expiresAt <= now) {
       sessions.delete(token);
       try {
-        await pool.execute('DELETE FROM sessions WHERE token = ?', [token]);
-      } catch {}
+        await deleteSessionRecord(token);
+      } catch {
+        // ignore cleanup failure for expired sessions
+      }
       return null;
     }
     return cached.user;
   }
   try {
+    const lookupValues = getSessionTokenLookupValues(token);
+    if (!lookupValues.length) return null;
+    const placeholders = lookupValues.map(() => '?').join(',');
     const [rows] = await pool.execute(
       `
       SELECT u.id, u.phoneNumber, u.name, u.role, s.expiresAt
       FROM sessions s
       JOIN users u ON u.id = s.userId
-      WHERE s.token = ?
+      WHERE s.token IN (${placeholders})
       LIMIT 1
     `,
-      [token]
+      lookupValues
     );
     const row = Array.isArray(rows) && rows[0] ? rows[0] : null;
     if (!row) return null;
     const expiresAt = row.expiresAt != null ? Number(row.expiresAt) : null;
     if (expiresAt != null && expiresAt <= now) {
       try {
-        await pool.execute('DELETE FROM sessions WHERE token = ?', [token]);
-      } catch {}
+        await deleteSessionRecord(token);
+      } catch {
+        // ignore cleanup failure for expired sessions
+      }
       return null;
     }
     const user = {
@@ -158,11 +242,7 @@ async function getSessionUser(token) {
     const effectiveExpiresAt = expiresAt ?? now + SESSION_TTL_MS;
     sessions.set(token, { user, expiresAt: effectiveExpiresAt });
     // best-effort keep-alive
-    await pool.execute('UPDATE sessions SET lastSeenAt = ?, expiresAt = ? WHERE token = ?', [
-      now,
-      effectiveExpiresAt,
-      token,
-    ]);
+    await touchSessionRecord(token, now, effectiveExpiresAt);
     return user;
   } catch (e) {
     console.error('Failed to load session from DB', e);
@@ -259,27 +339,24 @@ async function requireAdmin(c) {
 
   // Optional fallback for scripted/admin tooling (avoid shipping any admin secret to the browser)
   const headerToken = (c.req.header('x-admin-token') || '').trim();
-  if (ADMIN_TOKEN && headerToken === ADMIN_TOKEN) return null;
+  if (ADMIN_TOKEN_ENABLED && headerToken === ADMIN_TOKEN) return null;
 
   return c.json({ error: 'Unauthorized' }, 401);
 }
 
 function requirePrintDevice(c) {
-  if (!PRINT_DEVICE_KEY) return c.json({ error: 'Print device not configured' }, 503);
+  if (!PRINT_DEVICE_KEY_ENABLED) return c.json({ error: 'Print device not configured securely' }, 503);
   const key = (c.req.header('X-Device-Key') || '').trim();
-  if (!key || key !== PRINT_DEVICE_KEY) return c.json({ error: 'Unauthorized' }, 401);
+  if (!key || !ACCEPTED_PRINT_DEVICE_KEYS.includes(key)) return c.json({ error: 'Unauthorized' }, 401);
   return null;
+}
+
+function generatePrintClaimToken() {
+  return crypto.randomBytes(24).toString('hex');
 }
 
 function getPublicBaseUrl(c) {
   if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL;
-  const forwardedHost = (c.req.header('x-forwarded-host') || '').split(',')[0].trim();
-  if (forwardedHost) {
-    const forwardedProto = (c.req.header('x-forwarded-proto') || 'https')
-      .split(',')[0]
-      .trim();
-    return `${forwardedProto}://${forwardedHost}`;
-  }
   return new URL(c.req.url).origin;
 }
 
@@ -625,11 +702,12 @@ app.post('/api/auth/verify-otp', async (c) => {
     );
     const user = { id, phoneNumber: normalizedPhone, name: effectiveName, role };
     const sessionToken = `sess_${crypto.randomBytes(24).toString('base64url')}`;
+    const sessionTokenHash = hashSessionToken(sessionToken);
     const expiresAt = Date.now() + SESSION_TTL_MS;
     sessions.set(sessionToken, { user, expiresAt });
     await pool.execute(
       'INSERT INTO sessions (token, userId, createdAt, lastSeenAt, expiresAt) VALUES (?, ?, ?, ?, ?)',
-      [sessionToken, id, Date.now(), Date.now(), expiresAt]
+      [sessionTokenHash, id, Date.now(), Date.now(), expiresAt]
     );
     return c.json({ success: true, user, sessionToken });
   } catch {
@@ -677,7 +755,7 @@ app.post('/api/auth/complete-profile', async (c) => {
       Date.now(),
       updatedUser.id,
     ]);
-    await pool.execute('UPDATE sessions SET lastSeenAt = ? WHERE token = ?', [Date.now(), token]);
+    await touchSessionRecord(token, Date.now());
     return c.json({ success: true, user: updatedUser });
   } catch {
     return c.json({ error: 'Failed to complete profile' }, 500);
@@ -733,7 +811,7 @@ app.put('/api/profile', async (c) => {
     const existingSession = sessions.get(token);
     const expiresAt = existingSession?.expiresAt ?? Date.now() + SESSION_TTL_MS;
     sessions.set(token, { user: updatedUser, expiresAt });
-    await pool.execute('UPDATE sessions SET lastSeenAt = ? WHERE token = ?', [Date.now(), token]);
+    await touchSessionRecord(token, Date.now());
     return c.json({ success: true, user: updatedUser });
   } catch (e) {
     console.error('Error updating profile', e);
@@ -1219,7 +1297,9 @@ app.post('/api/admin/inventory/item/:id/restock', async (c) => {
   } catch (e) {
     try {
       await conn.rollback();
-    } catch {}
+    } catch {
+      // ignore rollback failure; original error is returned below
+    }
     console.error('Error restocking inventory item', e);
     return c.json({ error: 'Failed to restock inventory item' }, 500);
   } finally {
@@ -2123,6 +2203,7 @@ app.post('/api/orders/create', async (c) => {
       displayNumber,
       createdAt,
       userId: effectiveUserId,
+      userName: sessionUser?.name || null,
       phoneNumber: effectivePhoneNumber,
       items: effectiveItems,
       total: effectiveTotal,
@@ -2215,19 +2296,24 @@ printApi.post('/jobs/claim', async (c) => {
     }
 
     const now = Date.now();
+    const claimToken = generatePrintClaimToken();
     await conn.execute(
-      'UPDATE print_jobs SET status = ?, claimedAt = ?, attempts = attempts + 1 WHERE id = ?',
-      ['printing', now, job.id]
+      'UPDATE print_jobs SET status = ?, claimedAt = ?, claimToken = ?, attempts = attempts + 1 WHERE id = ?',
+      ['printing', now, claimToken, job.id]
     );
     await conn.commit();
 
-    const [orderRows] = await pool.execute('SELECT * FROM orders WHERE id = ? LIMIT 1', [
-      job.orderId,
-    ]);
+    const [orderRows] = await pool.execute(
+      `SELECT o.*, u.name AS userName
+       FROM orders o
+       LEFT JOIN users u ON u.id = o.userId
+       WHERE o.id = ? LIMIT 1`,
+      [job.orderId]
+    );
     const orderRow = Array.isArray(orderRows) && orderRows[0] ? orderRows[0] : null;
     if (!orderRow) {
       await pool.execute(
-        'UPDATE print_jobs SET status = ?, lastError = ?, printedAt = NULL WHERE id = ?',
+        'UPDATE print_jobs SET status = ?, lastError = ?, printedAt = NULL, claimedAt = NULL, claimToken = NULL WHERE id = ?',
         ['failed', 'Order not found', job.id]
       );
       return c.json({ success: false, error: 'Order not found' }, 404);
@@ -2238,6 +2324,7 @@ printApi.post('/jobs/claim', async (c) => {
       job: {
         id: Number(job.id),
         orderId: String(job.orderId),
+        claimToken,
         status: 'printing',
         attempts: Number(job.attempts || 0) + 1,
         claimedAt: now,
@@ -2266,10 +2353,16 @@ printApi.post('/jobs/:id/ack', async (c) => {
   if (!id) return c.json({ error: 'Invalid job id' }, 400);
 
   try {
-    await pool.execute(
-      'UPDATE print_jobs SET status = ?, printedAt = ?, lastError = NULL WHERE id = ?',
-      ['printed', Date.now(), id]
+    const body = await c.req.json().catch(() => ({}));
+    const claimToken = typeof body?.claimToken === 'string' ? body.claimToken.trim() : '';
+    if (!claimToken) return c.json({ error: 'claimToken is required' }, 400);
+    const [result] = await pool.execute(
+      'UPDATE print_jobs SET status = ?, printedAt = ?, lastError = NULL, claimToken = NULL WHERE id = ? AND status = ? AND claimToken = ?',
+      ['printed', Date.now(), id, 'printing', claimToken]
     );
+    if (!result?.affectedRows) {
+      return c.json({ error: 'Invalid or expired claim token' }, 409);
+    }
     return c.json({ success: true });
   } catch (e) {
     console.error('Failed to ack print job', e);
@@ -2287,12 +2380,15 @@ printApi.post('/jobs/:id/fail', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const message = typeof body?.error === 'string' ? body.error : 'Print failed';
-    const retry = Boolean(body?.retry);
-    const status = retry ? 'failed' : 'failed';
-    await pool.execute(
-      'UPDATE print_jobs SET status = ?, lastError = ?, printedAt = NULL, claimedAt = ? WHERE id = ?',
-      [status, message, Date.now(), id]
+    const claimToken = typeof body?.claimToken === 'string' ? body.claimToken.trim() : '';
+    if (!claimToken) return c.json({ error: 'claimToken is required' }, 400);
+    const [result] = await pool.execute(
+      'UPDATE print_jobs SET status = ?, lastError = ?, printedAt = NULL, claimedAt = NULL, claimToken = NULL WHERE id = ? AND status = ? AND claimToken = ?',
+      ['failed', message, id, 'printing', claimToken]
     );
+    if (!result?.affectedRows) {
+      return c.json({ error: 'Invalid or expired claim token' }, 409);
+    }
     return c.json({ success: true });
   } catch (e) {
     console.error('Failed to mark print job failed', e);
@@ -2427,6 +2523,7 @@ function mapOrderRow(row) {
   return {
     id: row.id,
     userId: row.userId || null,
+    userName: row.userName || null,
     phoneNumber: row.phoneNumber || null,
     items,
     total,

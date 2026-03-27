@@ -81,7 +81,8 @@ class PrintClient(private val serverUrl: String, private val deviceKey: String) 
         orderNumber = orderObj.getString("orderNumber"),
         displayNumber = orderObj.optInt("displayNumber", 0),
         createdAt = orderObj.optLong("createdAt", System.currentTimeMillis()),
-        phoneNumber = orderObj.optString("phoneNumber", null),
+        userName = orderObj.optString("userName").takeIf { it.isNotBlank() && it != "null" },
+        phoneNumber = orderObj.optString("phoneNumber").takeIf { it.isNotBlank() && it != "null" },
         paymentMethod = orderObj.optString("paymentMethod", "cash"),
         status = orderObj.optString("status", "received"),
         items = items,
@@ -93,6 +94,7 @@ class PrintClient(private val serverUrl: String, private val deviceKey: String) 
       return PrintJob(
         id = jobObj.getLong("id"),
         orderId = jobObj.getString("orderId"),
+        claimToken = jobObj.getString("claimToken"),
         order = order,
       )
     } catch (e: JSONException) {
@@ -105,17 +107,18 @@ class PrintClient(private val serverUrl: String, private val deviceKey: String) 
     }
   }
 
-  fun ack(jobId: Long) {
+  fun ack(jobId: Long, claimToken: String) {
+    val body = JSONObject(mapOf("claimToken" to claimToken)).toString()
     val req = Request.Builder()
       .url("${serverUrl.trimEnd('/')}/api/print/jobs/${jobId}/ack")
       .addHeader("X-Device-Key", deviceKey)
-      .post("{}".toRequestBody(jsonMedia))
+      .post(body.toRequestBody(jsonMedia))
       .build()
     execute(req)
   }
 
-  fun fail(jobId: Long, error: String, retry: Boolean) {
-    val body = JSONObject(mapOf("error" to error, "retry" to retry)).toString()
+  fun fail(jobId: Long, claimToken: String, error: String) {
+    val body = JSONObject(mapOf("claimToken" to claimToken, "error" to error)).toString()
     val req = Request.Builder()
       .url("${serverUrl.trimEnd('/')}/api/print/jobs/${jobId}/fail")
       .addHeader("X-Device-Key", deviceKey)

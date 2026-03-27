@@ -3,6 +3,7 @@ package sight.printbridge
 data class PrintJob(
   val id: Long,
   val orderId: String,
+  val claimToken: String,
   val order: Order,
 )
 
@@ -11,6 +12,7 @@ data class Order(
   val orderNumber: String,
   val displayNumber: Int,
   val createdAt: Long,
+  val userName: String?,
   val phoneNumber: String?,
   val paymentMethod: String,
   val status: String,

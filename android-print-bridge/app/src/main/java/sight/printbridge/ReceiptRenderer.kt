@@ -74,8 +74,11 @@ class ReceiptRenderer(
     val totalLabel = if (hasArabic) "Total / الإجمالي" else "Total"
     val footerLabel =
       if (hasArabic) "share with us @sightcafee شاركنا رايك على" else "Share with us @sightcafee"
+    val userFooterLabel = if (hasArabic) "User / المستخدم" else "User"
+    val userFooterText =
+      order.userName?.trim()?.takeIf { it.isNotEmpty() }?.let { "$userFooterLabel: $it" }
 
-    val height = measureHeight(order, logo, textSmall, textMuted, hasArabic, footerLabel)
+    val height = measureHeight(order, logo, textSmall, textMuted, hasArabic, footerLabel, userFooterText)
     val bitmap = Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     canvas.drawColor(Color.WHITE)
@@ -163,6 +166,19 @@ class ReceiptRenderer(
       maxWidth = widthPx - margin * 2,
       lineGap = scale(6f),
     )
+    val footerLines = wrapLines(footerLabel, textMuted, widthPx - margin * 2)
+    y += footerLines.size * (textMuted.textSize + scale(6f))
+    if (userFooterText != null) {
+      y += scale(6f)
+      drawCenteredLines(
+        canvas = canvas,
+        text = userFooterText,
+        paint = textMuted,
+        y = y,
+        maxWidth = widthPx - margin * 2,
+        lineGap = scale(6f),
+      )
+    }
 
     return bitmap
   }
@@ -174,6 +190,7 @@ class ReceiptRenderer(
     textMuted: TextPaint,
     hasArabic: Boolean,
     footerLabel: String,
+    userFooterText: String?,
   ): Int {
     val sectionGap = scale(16f)
     val rowGap = scale(10f)
@@ -215,6 +232,10 @@ class ReceiptRenderer(
 
     val footerLines = wrapLines(footerLabel, textMuted, widthPx - margin * 2)
     h += scale(12f) + footerLines.size * (textMuted.textSize + scale(6f)) + scale(16f)
+    if (userFooterText != null) {
+      val userFooterLines = wrapLines(userFooterText, textMuted, widthPx - margin * 2)
+      h += scale(6f) + userFooterLines.size * (textMuted.textSize + scale(6f))
+    }
     return (h + scale(36f)).toInt().coerceAtLeast(240)
   }
 
