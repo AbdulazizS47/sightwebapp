@@ -15,6 +15,7 @@ import coffeeIcon from '../assets/COFFEE.png';
 import v60Icon from '../assets/V60.png';
 import notCoffeeIcon from '../assets/NOT COFFEE.ong.png';
 import sweetsIcon from '../assets/SWEET.png';
+import { ImageWithFallback } from './figma/ImageWithFallback';
 import { apiBaseUrl } from '../utils/supabase/info';
 import { resolveImageUrl } from '../utils/media';
 
@@ -1036,7 +1037,7 @@ export function MenuPage({
                         {/* Admin image upload for existing item */}
                         {item.imageUrl && (
                           <div className="flex items-center gap-2">
-                            <img
+                            <ImageWithFallback
                               src={resolveImageUrl(item.imageUrl)}
                               alt="Preview"
                               className="w-16 h-16 object-cover border"
@@ -1197,10 +1198,11 @@ export function MenuPage({
                           </div>
                           {item.imageUrl && (
                             <div className="w-28 flex-shrink-0 bg-[var(--matte-black)] bg-opacity-10">
-                              <img
+                              <ImageWithFallback
                                 src={resolveImageUrl(item.imageUrl)}
                                 alt={language === 'en' ? item.nameEn : item.nameAr}
                                 className="w-full h-full object-cover"
+                                loading="lazy"
                               />
                             </div>
                           )}
@@ -1288,7 +1290,7 @@ export function MenuPage({
                             className="w-full text-sm"
                           />
                           {newItem.imageUrl && (
-                            <img
+                            <ImageWithFallback
                               src={resolveImageUrl(newItem.imageUrl as string)}
                               alt="Preview"
                               className="w-full h-32 object-cover border"
