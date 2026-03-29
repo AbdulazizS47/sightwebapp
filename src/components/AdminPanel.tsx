@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, RefreshCw, Plus, Edit2, X } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
+import { getImageUploadError, prepareImageUpload } from '../utils/imageUpload';
 import { apiBaseUrl } from '../utils/supabase/info';
 import { resolveImageUrl } from '../utils/media';
 
@@ -64,23 +65,6 @@ interface AdminPanelProps {
 
 type Tab = 'orders' | 'menu';
 const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp';
-const MAX_UPLOAD_IMAGE_BYTES = 5 * 1024 * 1024;
-const UPLOAD_ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const UPLOAD_ALLOWED_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
-
-const getImageUploadError = (file: File) => {
-  const type = String(file.type || '').toLowerCase().trim();
-  const ext = String(file.name || '')
-    .toLowerCase()
-    .match(/\.[a-z0-9]+$/)?.[0];
-  if (!UPLOAD_ALLOWED_IMAGE_TYPES.has(type) && !(ext && UPLOAD_ALLOWED_IMAGE_EXTENSIONS.has(ext))) {
-    return 'Unsupported format. Please use JPG, PNG, or WEBP.';
-  }
-  if (file.size > MAX_UPLOAD_IMAGE_BYTES) {
-    return 'Image too large (max 5MB).';
-  }
-  return '';
-};
 
 export function AdminPanel({
   onBack,
@@ -687,8 +671,9 @@ export function AdminPanel({
       return null;
     }
     try {
+      const optimizedFile = await prepareImageUpload(file);
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', optimizedFile, optimizedFile.name);
 
       const response = await fetch(`${apiBaseUrl}/admin/upload-image`, {
         method: 'POST',
