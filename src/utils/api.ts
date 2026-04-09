@@ -1,7 +1,9 @@
 export const enableHealthcheck = import.meta.env.VITE_ENABLE_HEALTHCHECK === 'true';
+export const allowSeedMenuTools =
+  import.meta.env.VITE_ALLOW_SEED_MENU_TOOLS === 'true' ||
+  import.meta.env.VITE_ALLOW_DEMO_MENU_TOOLS === 'true';
 
-// API backend configuration
 const rawApiBase = (import.meta.env.VITE_API_BASE_URL || '/api').trim();
-// Normalize to prevent accidental double "/api/api" and remove trailing slash
 const normalizedApiBase = rawApiBase.replace(/\/api\/api(\/|$)/, '/api$1').replace(/\/+$/, '');
+
 export const apiBaseUrl = normalizedApiBase;

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Coffee, Gift, Receipt, Sparkles } from 'lucide-react';
-import { apiBaseUrl } from '../utils/supabase/info';
+import { apiBaseUrl } from '../utils/api';
 
 interface User {
   id: string;

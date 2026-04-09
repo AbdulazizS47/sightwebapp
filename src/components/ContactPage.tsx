@@ -1,6 +1,6 @@
 import { ArrowLeft, Instagram, Mail, MapPin } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { apiBaseUrl } from '../utils/supabase/info';
+import { apiBaseUrl } from '../utils/api';
 
 interface ContactPageProps {
   onBack: () => void;

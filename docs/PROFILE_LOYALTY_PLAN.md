@@ -4,7 +4,7 @@ This document outlines the plan to add persistent user profiles and a loyalty pr
 
 ## Current State Summary
 
-- Authentication: Demo OTP and in-memory sessions. Role is derived from ADMIN_PHONE; otherwise user.
+- Authentication: OTP-based sign-in with DB-backed sessions. Role is derived from ADMIN_PHONE; otherwise user.
 - Orders: Stored in MySQL `orders` table and linked optionally to `userId` and `phoneNumber`.
 - Customers (Admin): Aggregated from orders by phone number.
 - Menu: Categories and items persist in MySQL.

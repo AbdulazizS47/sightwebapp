@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { apiBaseUrl } from '../utils/supabase/info';
+import { apiBaseUrl } from '../utils/api';
 import { readOtpFromSms } from '../utils/otpAutofill';
 
 interface AdminLoginPageProps {
@@ -11,7 +11,7 @@ interface AdminLoginPageProps {
 export function AdminLoginPage({ onBack, onSuccess, language }: AdminLoginPageProps) {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [otp, setOtp] = useState('');
-  const [demoOtp, setDemoOtp] = useState('');
+  const [debugOtp, setDebugOtp] = useState('');
   const [step, setStep] = useState<'phone' | 'otp'>('phone');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -27,7 +27,7 @@ export function AdminLoginPage({ onBack, onSuccess, language }: AdminLoginPagePr
       otpLabel: 'Verification Code',
       otpPlaceholder: 'Enter 6-digit code',
       verify: 'Verify',
-      note: 'Demo Mode: Any phone can receive a code. Admin role applies only to the configured admin phone.',
+      note: 'Use the configured admin phone number to access the dashboard.',
     },
     ar: {
       title: 'تسجيل دخول المدير',
@@ -38,7 +38,7 @@ export function AdminLoginPage({ onBack, onSuccess, language }: AdminLoginPagePr
       otpLabel: 'رمز التحقق',
       otpPlaceholder: 'أدخل رمز من 6 أرقام',
       verify: 'تحقق',
-      note: 'وضع التجريب: يمكن لأي رقم استقبال الرمز. تُطبَّق صلاحيات المدير فقط عند استخدام هاتف المدير المهيأ.',
+      note: 'استخدم رقم هاتف المدير المهيأ للوصول إلى لوحة التحكم.',
     },
   } as const;
 
@@ -60,7 +60,7 @@ export function AdminLoginPage({ onBack, onSuccess, language }: AdminLoginPagePr
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Failed to send code');
-      if (data.otp) setDemoOtp(String(data.otp));
+      if (data.otp) setDebugOtp(String(data.otp));
       setStep('otp');
     } catch (e: any) {
       setError(e.message);
@@ -170,10 +170,10 @@ export function AdminLoginPage({ onBack, onSuccess, language }: AdminLoginPagePr
                 className="w-full p-4 border-2 border-[var(--matte-black)] bg-[var(--crisp-white)] mb-4 focus:outline-none focus:border-[var(--espresso-brown)]"
               />
 
-              {demoOtp && (
+              {debugOtp && (
                 <div className="text-sm mb-4 p-3 bg-[var(--cool-gray)]">
-                  {language === 'ar' ? 'رمز التجربة:' : 'Dev code:'}{' '}
-                  <span className="font-bold">{demoOtp}</span>
+                  {language === 'ar' ? 'رمز التصحيح:' : 'Debug code:'}{' '}
+                  <span className="font-bold">{debugOtp}</span>
                 </div>
               )}
               <button

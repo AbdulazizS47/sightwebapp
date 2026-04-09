@@ -28,11 +28,14 @@ Recommended (OTP/SMS):
 - `AUTHENTICA_API_KEY`
 - `AUTHENTICA_TEMPLATE_ID`
 - `AUTHENTICA_METHOD`
-- `OTP_DEV_MODE=true` (only for testing without SMS)
+- `PUBLIC_BASE_URL=https://api.sightcoffeespace.com`
+- `OTP_DEV_MODE=false` on live Railway services
+- `OTP_DEV_MODE=true` only for temporary testing without SMS
 
 Optional:
 - `ADMIN_TOKEN`
 - `ADMIN_PHONE`
+- `ALLOW_SEED_MENU_TOOLS` only when you intentionally need the seed-item cleanup tool
 - `OTP_TTL_MS`, `OTP_RESEND_MIN_MS`, `OTP_MAX_PER_HOUR`, `OTP_MAX_ATTEMPTS`, `OTP_PEPPER`
 
 ## 4. Web service (Vite frontend)
@@ -42,6 +45,7 @@ Optional:
 4. Set **Start Command**: `npm run start:web`
 5. Add environment variables:
 - `VITE_API_BASE_URL=https://api.sightcoffeespace.com/api`
+- `VITE_ALLOW_SEED_MENU_TOOLS=false`
 
 ## 5. Custom domains + HTTPS
 1. In Railway, open **API service → Domains** and add:
@@ -64,4 +68,4 @@ In the Android app:
 ## 8. Quick checks
 - API: `https://api.sightcoffeespace.com/api/health` should return 200.
 - Web: `https://sightcoffeespace.com` should load.
-
+- OTP delivery should use a real SMS provider, not `SMS_PROVIDER=console`.

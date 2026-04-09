@@ -39,6 +39,13 @@ const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || '').trim();
 const ADMIN_PHONE = process.env.ADMIN_PHONE || '0547444145';
 const OTP_DEV_MODE_CONFIGURED = (process.env.OTP_DEV_MODE || '').trim() === 'true';
 const OTP_DEV_MODE = OTP_DEV_MODE_CONFIGURED && !IS_PRODUCTION;
+const OTP_DEBUG_RETURN_CODE_CONFIGURED =
+  (process.env.OTP_DEBUG_RETURN_CODE || '').trim() === 'true';
+const OTP_DEBUG_RETURN_CODE = OTP_DEBUG_RETURN_CODE_CONFIGURED && !IS_PRODUCTION;
+const ALLOW_SEED_MENU_TOOLS =
+  ((process.env.ALLOW_SEED_MENU_TOOLS || process.env.ALLOW_DEMO_MENU_TOOLS || '')
+    .trim()
+    .toLowerCase() === 'true');
 const FIXED_TABLET_DEVICE_KEY = '10c455da1e66cbea75db336e916786818b666c9e13323668';
 const PRINT_DEVICE_KEYS = (process.env.PRINT_DEVICE_KEY || '')
   .split(',')
@@ -159,6 +166,11 @@ if (PRINT_DEVICE_KEYS.length > 0 && !PRINT_DEVICE_KEYS.some(isStrongSharedSecret
 }
 if (OTP_DEV_MODE_CONFIGURED && IS_PRODUCTION) {
   logStartupWarning('OTP_DEV_MODE was requested but has been disabled because NODE_ENV=production.');
+}
+if (OTP_DEBUG_RETURN_CODE_CONFIGURED && IS_PRODUCTION) {
+  logStartupWarning(
+    'OTP_DEBUG_RETURN_CODE was requested but has been disabled because NODE_ENV=production.'
+  );
 }
 if (SMS_PROVIDER === 'console' && !OTP_DEV_MODE) {
   logStartupWarning('SMS_PROVIDER is "console"; OTPs will be logged to stdout.');
@@ -588,7 +600,6 @@ app.get('/api/settings/public', async (c) => {
   });
 });
 
-// Demo Auth Endpoints
 app.post('/api/auth/send-otp', async (c) => {
   try {
     const { phoneNumber, language, method } = await c.req.json();
@@ -649,8 +660,7 @@ app.post('/api/auth/send-otp', async (c) => {
       }
     }
 
-    const shouldReturn =
-      OTP_DEV_MODE || (process.env.OTP_DEBUG_RETURN_CODE || '').trim() === 'true';
+    const shouldReturn = OTP_DEV_MODE || OTP_DEBUG_RETURN_CODE;
     return c.json({ success: true, ...(shouldReturn ? { otp: code } : {}) });
   } catch (e) {
     console.error('Failed to send OTP', e);
@@ -1547,16 +1557,7 @@ app.post('/api/admin/reset-menu', async (c) => {
     if (!allowReset) {
       return c.json({ error: 'Menu reset disabled' }, 403);
     }
-    const demoCategoryIds = ['espresso', 'v60', 'hot', 'cold', 'pastries'];
-    const demoItemIds = [
-      'dbl-espresso',
-      'americano',
-      'cappuccino',
-      'latte',
-      'v60-basic',
-      'iced-latte',
-      'cheesecake',
-    ];
+    const seedCategoryIds = ['espresso', 'v60', 'hot', 'cold', 'pastries'];
     const categories = [
       { id: 'espresso', nameEn: 'Espresso', nameAr: 'إسبريسو', order: 1 },
       {
@@ -1581,15 +1582,15 @@ app.post('/api/admin/reset-menu', async (c) => {
 
     // Clean orphaned items
     const [existingItems] = await pool.execute('SELECT * FROM items');
-    const validCategoryIds = demoCategoryIds;
+    const validCategoryIds = seedCategoryIds;
     for (const item of existingItems) {
       if (!validCategoryIds.includes(item.category)) {
         await pool.execute('DELETE FROM items WHERE id = ?', [item.id]);
       }
     }
 
-    // Seed demo items
-    const demoItems = [
+    // Seed baseline items
+    const seedItems = [
       {
         id: 'dbl-espresso',
         nameEn: 'Double Espresso',
@@ -1662,7 +1663,7 @@ app.post('/api/admin/reset-menu', async (c) => {
       },
     ];
 
-    for (const it of demoItems) {
+    for (const it of seedItems) {
       await pool.execute(
         'INSERT INTO items (id, nameEn, nameAr, price, category, description, imageUrl, available) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE nameEn=VALUES(nameEn), nameAr=VALUES(nameAr), price=VALUES(price), category=VALUES(category), description=VALUES(description), imageUrl=VALUES(imageUrl), available=VALUES(available)',
         [
@@ -1693,12 +1694,14 @@ app.post('/api/admin/reset-menu', async (c) => {
   }
 });
 
-// Admin Menu: cleanup demo items safely (by known demo IDs only)
-app.post('/api/admin/menu/cleanup-demo', async (c) => {
+async function cleanupSeedMenuItems(c) {
   const unauthorized = await requireAdmin(c);
   if (unauthorized) return unauthorized;
   try {
-    const demoItemIds = [
+    if (!ALLOW_SEED_MENU_TOOLS) {
+      return c.json({ error: 'Seed cleanup disabled' }, 403);
+    }
+    const seedItemIds = [
       'dbl-espresso',
       'americano',
       'cappuccino',
@@ -1707,18 +1710,21 @@ app.post('/api/admin/menu/cleanup-demo', async (c) => {
       'iced-latte',
       'cheesecake',
     ];
-    const placeholders = demoItemIds.map(() => '?').join(',');
+    const placeholders = seedItemIds.map(() => '?').join(',');
     const [res] = await pool.execute(
       `DELETE FROM items WHERE id IN (${placeholders})`,
-      demoItemIds
+      seedItemIds
     );
     const deleted = Number(res?.affectedRows || 0);
     return c.json({ success: true, deleted });
   } catch (e) {
-    console.error('Error cleaning demo items', e);
-    return c.json({ error: 'Failed to clean demo items' }, 500);
+    console.error('Error cleaning seed items', e);
+    return c.json({ error: 'Failed to clean seed items' }, 500);
   }
-});
+}
+
+app.post('/api/admin/menu/cleanup-seed', cleanupSeedMenuItems);
+app.post('/api/admin/menu/cleanup-demo', cleanupSeedMenuItems);
 
 // Category CRUD
 app.post('/api/admin/menu/category', async (c) => {

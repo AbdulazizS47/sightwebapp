@@ -209,7 +209,7 @@ class MainActivity : AppCompatActivity() {
           val receiptWidthPx = selectedReceiptWidthPx()
           prefs.edit().putInt(StatusKeys.RECEIPT_WIDTH_PX, receiptWidthPx).apply()
           val renderer = ReceiptRenderer(this@MainActivity, targetWidthPx = receiptWidthPx)
-          val bitmap = renderer.render(sampleOrder(), loadLogo())
+          val bitmap = renderer.render(diagnosticOrder(), loadLogo())
           printBitmap(bitmap)
           playNotificationSound()
           setLastOrderText("Test print")
@@ -605,13 +605,13 @@ class MainActivity : AppCompatActivity() {
     return ContextCompat.checkSelfPermission(this, name) == PackageManager.PERMISSION_GRANTED
   }
 
-  private fun sampleOrder(): Order {
+  private fun diagnosticOrder(): Order {
     return Order(
-      id = "order:demo",
+      id = "order:diagnostic",
       orderNumber = "20260101-001",
       displayNumber = 1,
       createdAt = System.currentTimeMillis(),
-      userName = "Demo User",
+      userName = "Printer Test",
       phoneNumber = "9665568222800",
       paymentMethod = "cash",
       status = "received",

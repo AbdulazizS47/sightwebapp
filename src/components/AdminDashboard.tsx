@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Users, ClipboardList, Utensils, RefreshCw, Package } from 'lucide-react';
 import { AdminPanel } from './AdminPanel';
 import { AdminInventoryPanel } from './AdminInventoryPanel';
-import { apiBaseUrl } from '../utils/supabase/info';
+import { allowSeedMenuTools, apiBaseUrl } from '../utils/api';
 
 interface AdminDashboardProps {
   onBack: () => void;
@@ -89,7 +89,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       customersTab: 'Customers',
       settingsTab: 'Settings',
       refresh: 'Refresh',
-      cleanupDemo: 'Remove Demo Items',
+      cleanupSeed: 'Remove Seed Items',
       openStatus: 'Open Status',
       currentStatus: 'Current status',
       scheduleMode: 'Open Hours Schedule',
@@ -132,7 +132,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       customersTab: 'العملاء',
       settingsTab: 'الإعدادات',
       refresh: 'تحديث',
-      cleanupDemo: 'حذف العناصر التجريبية',
+      cleanupSeed: 'حذف العناصر الأولية',
       openStatus: 'حالة المتجر',
       currentStatus: 'الحالة الحالية',
       scheduleMode: 'جدول ساعات العمل',
@@ -283,18 +283,18 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
               <RefreshCw size={24} className={loading ? 'animate-spin' : ''} />
             </button>
           )}
-          {activeTab === 'menu' && (
+          {activeTab === 'menu' && allowSeedMenuTools && (
             <button
               onClick={async () => {
                 const ok = window.confirm(
                   language === 'en'
-                    ? 'Remove demo items only? This will not touch your real menu.'
-                    : 'هل تريد حذف العناصر التجريبية فقط؟ لن يؤثر على قائمتك الحقيقية.'
+                    ? 'Remove seed items only? This will not touch your real menu.'
+                    : 'هل تريد حذف العناصر الأولية فقط؟ لن يؤثر على قائمتك الحقيقية.'
                 );
                 if (!ok) return;
                 setCleanupLoading(true);
                 try {
-                  const res = await fetch(`${apiBaseUrl}/admin/menu/cleanup-demo`, {
+                  const res = await fetch(`${apiBaseUrl}/admin/menu/cleanup-seed`, {
                     method: 'POST',
                     headers: { Authorization: `Bearer ${sessionToken}` },
                   });
@@ -302,24 +302,24 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
                   if (data.success) {
                     alert(
                       language === 'en'
-                        ? `Removed ${data.deleted || 0} demo items.`
-                        : `تم حذف ${data.deleted || 0} عناصر تجريبية.`
+                        ? `Removed ${data.deleted || 0} seed items.`
+                        : `تم حذف ${data.deleted || 0} عناصر أولية.`
                     );
                   } else {
-                    alert('Failed to remove demo items: ' + (data.error || 'Unknown error'));
+                    alert('Failed to remove seed items: ' + (data.error || 'Unknown error'));
                   }
                 } catch (e) {
-                  console.error('Error removing demo items', e);
-                  alert(language === 'en' ? 'Error removing demo items' : 'حدث خطأ أثناء الحذف');
+                  console.error('Error removing seed items', e);
+                  alert(language === 'en' ? 'Error removing seed items' : 'حدث خطأ أثناء الحذف');
                 } finally {
                   setCleanupLoading(false);
                 }
               }}
               disabled={cleanupLoading}
               className="text-[var(--matte-black)] hover:text-[var(--espresso-brown)] transition-colors disabled:opacity-50 text-xs sm:text-sm"
-              aria-label={text.cleanupDemo}
+              aria-label={text.cleanupSeed}
             >
-              {cleanupLoading ? '...' : text.cleanupDemo}
+              {cleanupLoading ? '...' : text.cleanupSeed}
             </button>
           )}
         </div>

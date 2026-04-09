@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, RefreshCw, Plus, Edit2, X } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { getImageUploadError, prepareImageUpload } from '../utils/imageUpload';
-import { apiBaseUrl } from '../utils/supabase/info';
+import { apiBaseUrl } from '../utils/api';
 import { resolveImageUrl } from '../utils/media';
 
 interface Order {

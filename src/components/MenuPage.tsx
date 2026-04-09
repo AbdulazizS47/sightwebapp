@@ -17,7 +17,7 @@ import notCoffeeIcon from '../assets/NOT COFFEE.ong.png';
 import sweetsIcon from '../assets/SWEET.png';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { getImageUploadError, prepareImageUpload } from '../utils/imageUpload';
-import { apiBaseUrl } from '../utils/supabase/info';
+import { apiBaseUrl } from '../utils/api';
 import { resolveImageUrl } from '../utils/media';
 
 interface MenuItem {
@@ -158,7 +158,7 @@ export function MenuPage({
   const isRTL = language === 'ar';
 
   useEffect(() => {
-    // Load menu on mount (avoid resetting demo data automatically)
+    // Load menu on mount without mutating seeded data automatically
     loadMenu();
 
     // Listen for admin updates across tabs

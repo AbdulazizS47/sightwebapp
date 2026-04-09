@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
-import { apiBaseUrl } from '../utils/supabase/info';
+import { apiBaseUrl } from '../utils/api';
 import { readOtpFromSms } from '../utils/otpAutofill';
 
 interface AuthModalProps {
@@ -16,7 +16,7 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [demoOtp, setDemoOtp] = useState('');
+  const [debugOtp, setDebugOtp] = useState('');
   const [tempSessionToken, setTempSessionToken] = useState('');
   const [tempUser, setTempUser] = useState<any>(null);
   const otpInputRef = useRef<HTMLInputElement | null>(null);
@@ -92,7 +92,7 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
         throw new Error(data.error || 'Failed to send OTP');
       }
 
-      if (data.otp) setDemoOtp(String(data.otp));
+      if (data.otp) setDebugOtp(String(data.otp));
 
       setStep('otp');
     } catch (err: any) {
@@ -295,10 +295,10 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
               disabled={loading}
             />
 
-            {demoOtp && (
+            {debugOtp && (
               <div className="text-sm mb-4 p-3 bg-[var(--cool-gray)] text-[var(--matte-black)]">
-                {language === 'ar' ? 'رمز التجربة:' : 'Dev code:'}{' '}
-                <span className="font-bold">{demoOtp}</span>
+                {language === 'ar' ? 'رمز التصحيح:' : 'Debug code:'}{' '}
+                <span className="font-bold">{debugOtp}</span>
               </div>
             )}
 

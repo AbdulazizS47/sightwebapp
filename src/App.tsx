@@ -9,7 +9,7 @@ import { OrderSuccessModal } from './components/OrderSuccessModal';
 import { OrderTrackingPage } from './components/OrderTrackingPage';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AdminLoginPage } from './components/AdminLoginPage';
-import { apiBaseUrl, enableHealthcheck } from './utils/supabase/info';
+import { apiBaseUrl, enableHealthcheck } from './utils/api';
 import { ProfilePage } from './components/ProfilePage';
 
 type Page = 'landing' | 'menu' | 'contact' | 'dashboard' | 'admin-login' | 'profile' | 'order';

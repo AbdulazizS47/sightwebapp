@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, RefreshCw, Trash2, Edit2, Check, X } from 'lucide-react';
-import { apiBaseUrl } from '../utils/supabase/info';
+import { apiBaseUrl } from '../utils/api';
 
 interface AdminInventoryPanelProps {
   sessionToken: string;

@@ -1,7 +1,7 @@
 import { motion } from 'motion/react';
 import { useEffect, useState } from 'react';
 import logoImage from 'figma:asset/6a698afc3834913c1c2ac422fa5bd04b815dc28c.png';
-import { apiBaseUrl } from '../utils/supabase/info';
+import { apiBaseUrl } from '../utils/api';
 
 interface LandingPageProps {
   onNavigate: (...args: ['menu' | 'contact']) => void;

@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, Plus, Minus, Banknote } from 'lucide-react';
-// Removed Supabase legacy imports
-// import { supabaseUrl, publicAnonKey, supabaseFunctionName } from '../utils/supabase/info';
-import { apiBaseUrl } from '../utils/supabase/info';
+import { apiBaseUrl } from '../utils/api';
 
 interface CartItem {
   id: string;

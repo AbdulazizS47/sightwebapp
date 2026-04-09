@@ -131,7 +131,7 @@ When `/api/orders/create` succeeds:
 
 1. Implement Phase 1 + 2 in server (DB + APIs).
 2. Build Android print bridge MVP.
-3. Test with real printer + sample orders.
+3. Test with real printer + test orders.
 4. Add Admin reprint UI.
 
 ---

@@ -1,4 +1,4 @@
-import { apiBaseUrl } from './supabase/info';
+import { apiBaseUrl } from './api';
 
 const getWindowOrigin = () => {
   if (typeof window === 'undefined') return '';
