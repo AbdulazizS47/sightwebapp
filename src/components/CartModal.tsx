@@ -2,12 +2,16 @@ import { useState, useEffect } from 'react';
 import { X, Plus, Minus, Banknote } from 'lucide-react';
 import { apiBaseUrl } from '../utils/api';
 
+type DrinkTemperature = 'hot' | 'iced';
+
 interface CartItem {
   id: string;
+  cartKey?: string;
   nameEn: string;
   nameAr: string;
   price: number;
   quantity: number;
+  temperature?: DrinkTemperature;
 }
 
 interface CartModalProps {
@@ -59,6 +63,8 @@ export function CartModal({
       confirmMessage: 'Your order will be ready within 10 minutes. Pay on pickup.',
       confirmButton: 'Confirm Order',
       cancelButton: 'Cancel',
+      hot: 'Hot',
+      iced: 'Iced',
     },
     ar: {
       cart: 'سلتك',
@@ -82,6 +88,8 @@ export function CartModal({
       confirmMessage: 'سيكون طلبك جاهزًا خلال 10 دقائق. الدفع عند الاستلام.',
       confirmButton: 'تأكيد الطلب',
       cancelButton: 'إلغاء',
+      hot: 'ساخن',
+      iced: 'بارد',
     },
   };
 
@@ -90,10 +98,19 @@ export function CartModal({
   const VAT_RATE = 0.15;
   const maxDiscount = 20; // SAR limit for 50% off (discount amount)
 
-  const updateQuantity = (id: string, change: number) => {
+  const getCartKey = (item: CartItem) => item.cartKey || item.id;
+
+  const getTemperatureLabel = (temperature?: DrinkTemperature) => {
+    if (!temperature) return '';
+    return temperature === 'hot' ? text.hot : text.iced;
+  };
+
+  const updateQuantity = (cartKey: string, change: number) => {
     const updatedItems = items
       .map((item) =>
-        item.id === id ? { ...item, quantity: Math.max(0, item.quantity + change) } : item
+        getCartKey(item) === cartKey
+          ? { ...item, quantity: Math.max(0, item.quantity + change) }
+          : item
       )
       .filter((item) => item.quantity > 0);
 
@@ -164,6 +181,7 @@ export function CartModal({
           items: items.map((item) => ({
             id: item.id,
             quantity: item.quantity,
+            options: item.temperature ? { temperature: item.temperature } : undefined,
           })),
           paymentMethod,
           language,
@@ -190,8 +208,13 @@ export function CartModal({
             phoneNumber: null,
             items: items.map((item) => ({
               quantity: item.quantity,
-              name: language === 'en' ? item.nameEn : item.nameAr,
+              name: `${language === 'en' ? item.nameEn : item.nameAr}${
+                item.temperature ? ` · ${getTemperatureLabel(item.temperature)}` : ''
+              }`,
+              nameEn: `${item.nameEn}${item.temperature ? ` · ${item.temperature === 'hot' ? 'Hot' : 'Iced'}` : ''}`,
+              nameAr: `${item.nameAr}${item.temperature ? ` · ${item.temperature === 'hot' ? 'ساخن' : 'بارد'}` : ''}`,
               price: item.price,
+              options: item.temperature ? { temperature: item.temperature } : undefined,
             })),
             total: finalTotal,
             subtotalExclVat,
@@ -280,38 +303,48 @@ export function CartModal({
           <>
             {/* Cart Items */}
             <div className="space-y-3 mb-6">
-              {items.map((item) => (
-                <div key={item.id} className="flex items-center gap-3 p-4 bg-[var(--cool-gray)]">
-                  <div className="flex-1 min-w-0">
-                    <h3 className="mb-1 text-[var(--matte-black)]">
-                      {language === 'en' ? item.nameEn : item.nameAr}
-                    </h3>
-                    <div className="text-sm text-[var(--matte-black)] opacity-70">
-                      {item.price} {text.sar}
+              {items.map((item) => {
+                const cartKey = getCartKey(item);
+                const temperatureLabel = getTemperatureLabel(item.temperature);
+
+                return (
+                  <div key={cartKey} className="flex items-center gap-3 p-4 bg-[var(--cool-gray)]">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="mb-1 text-[var(--matte-black)]">
+                        {language === 'en' ? item.nameEn : item.nameAr}
+                      </h3>
+                      {temperatureLabel && (
+                        <div className="text-[11px] text-[var(--matte-black)] opacity-60 mb-1">
+                          {temperatureLabel}
+                        </div>
+                      )}
+                      <div className="text-sm text-[var(--matte-black)] opacity-70">
+                        {item.price} {text.sar}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => updateQuantity(cartKey, -1)}
+                        className="w-10 h-10 bg-[var(--espresso-brown)] text-[var(--crisp-white)] flex items-center justify-center hover:bg-[var(--matte-black)] transition-colors"
+                      >
+                        <Minus size={16} />
+                      </button>
+
+                      <span className="w-8 text-center text-[var(--matte-black)]">
+                        {item.quantity}
+                      </span>
+
+                      <button
+                        onClick={() => updateQuantity(cartKey, 1)}
+                        className="w-10 h-10 bg-[var(--espresso-brown)] text-[var(--crisp-white)] flex items-center justify-center hover:bg-[var(--matte-black)] transition-colors"
+                      >
+                        <Plus size={16} />
+                      </button>
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => updateQuantity(item.id, -1)}
-                      className="w-10 h-10 bg-[var(--espresso-brown)] text-[var(--crisp-white)] flex items-center justify-center hover:bg-[var(--matte-black)] transition-colors"
-                    >
-                      <Minus size={16} />
-                    </button>
-
-                    <span className="w-8 text-center text-[var(--matte-black)]">
-                      {item.quantity}
-                    </span>
-
-                    <button
-                      onClick={() => updateQuantity(item.id, 1)}
-                      className="w-10 h-10 bg-[var(--espresso-brown)] text-[var(--crisp-white)] flex items-center justify-center hover:bg-[var(--matte-black)] transition-colors"
-                    >
-                      <Plus size={16} />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             {/* Loyalty reward toggle */}
             {loyalty?.enabled && loyalty.stamps === 3 && (

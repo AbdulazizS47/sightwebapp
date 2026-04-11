@@ -2,7 +2,6 @@ import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import {
   Plus,
   ShoppingBag,
-  ShoppingCart,
   ArrowLeft,
   Edit2,
   Save,
@@ -40,12 +39,16 @@ interface Category {
   iconUrl?: string;
 }
 
+type DrinkTemperature = 'hot' | 'iced';
+
 interface CartItem {
   id: string;
+  cartKey?: string;
   nameEn: string;
   nameAr: string;
   price: number;
   quantity: number;
+  temperature?: DrinkTemperature;
 }
 
 interface User {
@@ -130,6 +133,9 @@ export function MenuPage({
   });
   const [lastAddedId, setLastAddedId] = useState<string | null>(null);
   const [cardQuantities, setCardQuantities] = useState<Record<string, number>>({});
+  const [selectedTemperatures, setSelectedTemperatures] = useState<
+    Record<string, DrinkTemperature>
+  >({});
 
   // Check if user is admin (superuser)
   // const isAdmin = user?.phoneNumber === '0547444145';
@@ -145,12 +151,22 @@ export function MenuPage({
       cart: 'Cart',
       items: 'items',
       sar: 'SAR',
+      hot: 'Hot',
+      iced: 'Iced',
+      temperature: 'Temperature',
+      checkout: 'Checkout',
+      emptyCart: 'Cart is empty',
     },
     ar: {
       menu: 'القائمة',
       cart: 'السلة',
       items: 'عناصر',
       sar: 'ريال',
+      hot: 'ساخن',
+      iced: 'بارد',
+      temperature: 'درجة المشروب',
+      checkout: 'تنفيذ الطلب',
+      emptyCart: 'السلة فارغة',
     },
   };
 
@@ -195,7 +211,8 @@ export function MenuPage({
     const next: Record<string, number> = {};
     for (const item of cartItems) {
       const qty = Number(item.quantity) || 0;
-      if (qty > 0) next[String(item.id)] = qty;
+      const key = String(item.cartKey || item.id);
+      if (qty > 0) next[key] = qty;
     }
     setCardQuantities(next);
   }, [cartItems]);
@@ -257,55 +274,77 @@ export function MenuPage({
     }
   };
 
+  const hasTemperatureChoice = (item: MenuItem) => item.category.toLowerCase() === 'v60';
+
+  const getSelectedTemperature = (item: MenuItem): DrinkTemperature =>
+    selectedTemperatures[item.id] || 'iced';
+
+  const getCartKey = (item: MenuItem, temperature?: DrinkTemperature) =>
+    temperature ? `${item.id}:${temperature}` : item.id;
+
   const addToCart = (item: MenuItem) => {
+    const temperature = hasTemperatureChoice(item) ? getSelectedTemperature(item) : undefined;
+    const cartKey = getCartKey(item, temperature);
     setCardQuantities((prev) => ({
       ...prev,
-      [String(item.id)]: (Number(prev[String(item.id)]) || 0) + 1,
+      [cartKey]: (Number(prev[cartKey]) || 0) + 1,
     }));
     setCart((prevCart) => {
-      const existingItem = prevCart.find((cartItem) => cartItem.id === item.id);
+      const existingItem = prevCart.find(
+        (cartItem) => (cartItem.cartKey || cartItem.id) === cartKey
+      );
       if (existingItem) {
         return prevCart.map((cartItem) =>
-          cartItem.id === item.id ? { ...cartItem, quantity: cartItem.quantity + 1 } : cartItem
+          (cartItem.cartKey || cartItem.id) === cartKey
+            ? { ...cartItem, cartKey, temperature, quantity: cartItem.quantity + 1 }
+            : cartItem
         );
       }
-      return [...prevCart, { ...item, quantity: 1 }];
+      return [...prevCart, { ...item, cartKey, temperature, quantity: 1 }];
     });
     // Quick feedback for add-to-cart
-    setLastAddedId(item.id);
+    setLastAddedId(cartKey);
     setTimeout(() => setLastAddedId(null), 1000);
   };
 
   const changeItemQuantity = (item: MenuItem, delta: number) => {
     if (!delta) return;
+    const temperature = hasTemperatureChoice(item) ? getSelectedTemperature(item) : undefined;
+    const cartKey = getCartKey(item, temperature);
     setCardQuantities((prev) => {
-      const key = String(item.id);
+      const key = cartKey;
       const current = Number(prev[key]) || 0;
       const nextQty = Math.max(0, current + delta);
       if (nextQty <= 0) {
-        const { [key]: _, ...rest } = prev;
+        const rest = { ...prev };
+        delete rest[key];
         return rest;
       }
       return { ...prev, [key]: nextQty };
     });
     setCart((prevCart) => {
-      const existingItem = prevCart.find((cartItem) => cartItem.id === item.id);
+      const existingItem = prevCart.find(
+        (cartItem) => (cartItem.cartKey || cartItem.id) === cartKey
+      );
       if (!existingItem && delta < 0) return prevCart;
       if (existingItem) {
         const nextQty = existingItem.quantity + delta;
         if (nextQty <= 0) {
-          return prevCart.filter((cartItem) => cartItem.id !== item.id);
+          return prevCart.filter((cartItem) => (cartItem.cartKey || cartItem.id) !== cartKey);
         }
         return prevCart.map((cartItem) =>
-          cartItem.id === item.id ? { ...cartItem, quantity: nextQty } : cartItem
+          (cartItem.cartKey || cartItem.id) === cartKey
+            ? { ...cartItem, cartKey, temperature, quantity: nextQty }
+            : cartItem
         );
       }
-      return [...prevCart, { ...item, quantity: Math.max(1, delta) }];
+      return [...prevCart, { ...item, cartKey, temperature, quantity: Math.max(1, delta) }];
     });
   };
 
-  const getItemCartQuantity = (itemId: string) => {
-    return Number(cardQuantities[String(itemId)]) || 0;
+  const getItemCartQuantity = (item: MenuItem) => {
+    const temperature = hasTemperatureChoice(item) ? getSelectedTemperature(item) : undefined;
+    return Number(cardQuantities[getCartKey(item, temperature)]) || 0;
   };
 
   // Image upload helper for admin (in-component scope)
@@ -727,83 +766,86 @@ export function MenuPage({
                             : 'border-[var(--matte-black)] border-opacity-30'
                       }`}
                     >
-                    {activeCategory === category.id && !isNoFrame && (
-                      <span className="absolute -inset-1 rounded-full border border-[var(--espresso-brown)]/30 shadow-[0_0_0_6px_rgba(88,62,45,0.22)]" />
-                    )}
-                    {(() => {
-                      const iconById: Record<string, string> = {
-                        coffee: coffeeIcon,
-                        espresso: coffeeIcon,
-                        'test-cat-3gl702': coffeeIcon,
-                        v60: v60Icon,
-                        'not-coffee': notCoffeeIcon,
-                        cold: notCoffeeIcon,
-                        pastries: sweetsIcon,
-                        sweets: sweetsIcon,
-                      };
-                      const icon = iconById[category.id] || category.iconUrl || '';
-                      if (isNoFrame) {
-                        return (
-                          <div className="relative w-5 h-5 flex items-center justify-center">
-                            <Coffee
+                      {activeCategory === category.id && !isNoFrame && (
+                        <span className="absolute -inset-1 rounded-full border border-[var(--espresso-brown)]/30 shadow-[0_0_0_6px_rgba(88,62,45,0.22)]" />
+                      )}
+                      {(() => {
+                        const iconById: Record<string, string> = {
+                          coffee: coffeeIcon,
+                          espresso: coffeeIcon,
+                          'test-cat-3gl702': coffeeIcon,
+                          v60: v60Icon,
+                          'not-coffee': notCoffeeIcon,
+                          cold: notCoffeeIcon,
+                          pastries: sweetsIcon,
+                          sweets: sweetsIcon,
+                        };
+                        const icon = iconById[category.id] || category.iconUrl || '';
+                        if (isNoFrame) {
+                          return (
+                            <div className="relative w-5 h-5 flex items-center justify-center">
+                              <Coffee
+                                size={16}
+                                strokeWidth={1.8}
+                                className="text-[var(--matte-black)] scale-[1.9]"
+                              />
+                              <Slash
+                                size={18}
+                                strokeWidth={1.8}
+                                className="absolute text-[var(--matte-black)] scale-[1.9]"
+                              />
+                            </div>
+                          );
+                        }
+
+                        if (!icon) {
+                          return (
+                            <ShoppingBag
                               size={16}
-                              strokeWidth={1.8}
                               className="text-[var(--matte-black)] scale-[1.9]"
                             />
-                            <Slash
-                              size={18}
-                              strokeWidth={1.8}
-                              className="absolute text-[var(--matte-black)] scale-[1.9]"
-                            />
-                          </div>
-                        );
-                      }
+                          );
+                        }
 
-                      if (!icon) {
+                        const resolved =
+                          icon.startsWith('figma:asset') || icon.includes('example.com')
+                            ? categoryFallback
+                            : icon;
+
                         return (
-                          <ShoppingBag size={16} className="text-[var(--matte-black)] scale-[1.9]" />
+                          <img
+                            src={resolved}
+                            alt={language === 'en' ? category.nameEn : category.nameAr}
+                            className="w-5 h-5 object-contain scale-[1.9]"
+                          />
                         );
-                      }
-
-                      const resolved =
-                        icon.startsWith('figma:asset') || icon.includes('example.com')
-                          ? categoryFallback
-                          : icon;
-
-                      return (
-                        <img
-                          src={resolved}
-                          alt={language === 'en' ? category.nameEn : category.nameAr}
-                          className="w-5 h-5 object-contain scale-[1.9]"
-                        />
-                      );
-                    })()}
-                  </div>
-                  <span className="text-[8px] text-[var(--matte-black)] text-center leading-tight max-w-[60px]">
-                    {language === 'en' ? category.nameEn : category.nameAr}
-                  </span>
-                  {canEdit && (
-                    <div className="flex gap-1">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingCategory(category.id);
-                        }}
-                        className="p-1 bg-[var(--crisp-white)] border border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)] transition-colors"
-                      >
-                        <Edit2 size={10} />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteCategory(category.id);
-                        }}
-                        className="p-1 bg-[var(--crisp-white)] border border-[var(--matte-black)] hover:bg-red-600 hover:text-[var(--crisp-white)] transition-colors"
-                      >
-                        <Trash2 size={10} />
-                      </button>
+                      })()}
                     </div>
-                  )}
+                    <span className="text-[8px] text-[var(--matte-black)] text-center leading-tight max-w-[60px]">
+                      {language === 'en' ? category.nameEn : category.nameAr}
+                    </span>
+                    {canEdit && (
+                      <div className="flex gap-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingCategory(category.id);
+                          }}
+                          className="p-1 bg-[var(--crisp-white)] border border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)] transition-colors"
+                        >
+                          <Edit2 size={10} />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteCategory(category.id);
+                          }}
+                          className="p-1 bg-[var(--crisp-white)] border border-[var(--matte-black)] hover:bg-red-600 hover:text-[var(--crisp-white)] transition-colors"
+                        >
+                          <Trash2 size={10} />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -950,7 +992,13 @@ export function MenuPage({
 
               <div className="space-y-2.5">
                 {categoryItems.map((item) => {
-                  const itemQty = getItemCartQuantity(item.id);
+                  const itemHasTemperatureChoice = hasTemperatureChoice(item);
+                  const selectedTemperature = getSelectedTemperature(item);
+                  const itemQty = getItemCartQuantity(item);
+                  const itemAddedKey = getCartKey(
+                    item,
+                    itemHasTemperatureChoice ? selectedTemperature : undefined
+                  );
 
                   return (
                     <div
@@ -962,147 +1010,149 @@ export function MenuPage({
                       } ${!item.available && canEdit ? 'opacity-50' : ''}`}
                     >
                       {editingItem === item.id ? (
-                      <div className="p-3 space-y-2.5">
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            placeholder="English Name"
-                            value={item.nameEn}
-                            onChange={(e) =>
-                              setMenuItems((prev) =>
-                                prev.map((i) =>
-                                  i.id === item.id ? { ...i, nameEn: e.target.value } : i
-                                )
-                              )
-                            }
-                            className="flex-1 px-2.5 py-1.5 border border-[var(--matte-black)] text-xs"
-                          />
-                          <input
-                            type="text"
-                            placeholder="Arabic Name"
-                            value={item.nameAr}
-                            onChange={(e) =>
-                              setMenuItems((prev) =>
-                                prev.map((i) =>
-                                  i.id === item.id ? { ...i, nameAr: e.target.value } : i
-                                )
-                              )
-                            }
-                            className="flex-1 px-2.5 py-1.5 border border-[var(--matte-black)] text-xs"
-                            dir="rtl"
-                          />
-                        </div>
-                        <textarea
-                          placeholder="English Description"
-                          value={item.descriptionEn}
-                          onChange={(e) =>
-                            setMenuItems((prev) =>
-                              prev.map((i) =>
-                                i.id === item.id ? { ...i, descriptionEn: e.target.value } : i
-                              )
-                            )
-                          }
-                          className="w-full px-2.5 py-1.5 border border-[var(--matte-black)] text-xs"
-                          rows={2}
-                        />
-                        <textarea
-                          placeholder="Arabic Description"
-                          value={item.descriptionAr}
-                          onChange={(e) =>
-                            setMenuItems((prev) =>
-                              prev.map((i) =>
-                                i.id === item.id ? { ...i, descriptionAr: e.target.value } : i
-                              )
-                            )
-                          }
-                          className="w-full px-2.5 py-1.5 border border-[var(--matte-black)] text-xs"
-                          rows={2}
-                          dir="rtl"
-                        />
-                        {/* Admin image upload for existing item */}
-                        {item.imageUrl && (
-                          <div className="flex items-center gap-2">
-                            <ImageWithFallback
-                              src={resolveImageUrl(item.imageUrl)}
-                              alt="Preview"
-                              className="w-16 h-16 object-cover border"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => removeItemImage(item.id)}
-                              className="px-2.5 py-1.5 border border-red-600 text-red-600 text-xs hover:bg-red-600 hover:text-white transition-colors"
-                            >
-                              Remove image
-                            </button>
-                          </div>
-                        )}
-                        <input
-                          type="file"
-                          accept={IMAGE_ACCEPT}
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              const url = await uploadImageFile(file);
-                              if (url) {
-                                setMenuItems((prev) =>
-                                  prev.map((i) => (i.id === item.id ? { ...i, imageUrl: url } : i))
-                                );
-                                // Persist immediately so it shows in the menu right away
-                                await updateItem(item.id, { imageUrl: url }, { exitEdit: false });
-                              }
-                            }
-                          }}
-                          className="w-full text-xs"
-                        />
-                        <div className="flex items-center gap-3">
-                          <input
-                            type="number"
-                            step="0.01"
-                            placeholder="Price"
-                            value={item.price}
-                            onChange={(e) =>
-                              setMenuItems((prev) =>
-                                prev.map((i) =>
-                                  i.id === item.id
-                                    ? { ...i, price: parseFloat(e.target.value) || 0 }
-                                    : i
-                                )
-                              )
-                            }
-                            className="w-24 px-2.5 py-1.5 border border-[var(--matte-black)] text-xs"
-                          />
-                          <label className="flex items-center gap-1.5 text-xs">
+                        <div className="p-3 space-y-2.5">
+                          <div className="flex gap-2">
                             <input
-                              type="checkbox"
-                              checked={item.available}
+                              type="text"
+                              placeholder="English Name"
+                              value={item.nameEn}
                               onChange={(e) =>
                                 setMenuItems((prev) =>
                                   prev.map((i) =>
-                                    i.id === item.id ? { ...i, available: e.target.checked } : i
+                                    i.id === item.id ? { ...i, nameEn: e.target.value } : i
                                   )
                                 )
                               }
-                              className="w-3.5 h-3.5"
+                              className="flex-1 px-2.5 py-1.5 border border-[var(--matte-black)] text-xs"
                             />
-                            Available
-                          </label>
+                            <input
+                              type="text"
+                              placeholder="Arabic Name"
+                              value={item.nameAr}
+                              onChange={(e) =>
+                                setMenuItems((prev) =>
+                                  prev.map((i) =>
+                                    i.id === item.id ? { ...i, nameAr: e.target.value } : i
+                                  )
+                                )
+                              }
+                              className="flex-1 px-2.5 py-1.5 border border-[var(--matte-black)] text-xs"
+                              dir="rtl"
+                            />
+                          </div>
+                          <textarea
+                            placeholder="English Description"
+                            value={item.descriptionEn}
+                            onChange={(e) =>
+                              setMenuItems((prev) =>
+                                prev.map((i) =>
+                                  i.id === item.id ? { ...i, descriptionEn: e.target.value } : i
+                                )
+                              )
+                            }
+                            className="w-full px-2.5 py-1.5 border border-[var(--matte-black)] text-xs"
+                            rows={2}
+                          />
+                          <textarea
+                            placeholder="Arabic Description"
+                            value={item.descriptionAr}
+                            onChange={(e) =>
+                              setMenuItems((prev) =>
+                                prev.map((i) =>
+                                  i.id === item.id ? { ...i, descriptionAr: e.target.value } : i
+                                )
+                              )
+                            }
+                            className="w-full px-2.5 py-1.5 border border-[var(--matte-black)] text-xs"
+                            rows={2}
+                            dir="rtl"
+                          />
+                          {/* Admin image upload for existing item */}
+                          {item.imageUrl && (
+                            <div className="flex items-center gap-2">
+                              <ImageWithFallback
+                                src={resolveImageUrl(item.imageUrl)}
+                                alt="Preview"
+                                className="w-16 h-16 object-cover border"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeItemImage(item.id)}
+                                className="px-2.5 py-1.5 border border-red-600 text-red-600 text-xs hover:bg-red-600 hover:text-white transition-colors"
+                              >
+                                Remove image
+                              </button>
+                            </div>
+                          )}
+                          <input
+                            type="file"
+                            accept={IMAGE_ACCEPT}
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                const url = await uploadImageFile(file);
+                                if (url) {
+                                  setMenuItems((prev) =>
+                                    prev.map((i) =>
+                                      i.id === item.id ? { ...i, imageUrl: url } : i
+                                    )
+                                  );
+                                  // Persist immediately so it shows in the menu right away
+                                  await updateItem(item.id, { imageUrl: url }, { exitEdit: false });
+                                }
+                              }
+                            }}
+                            className="w-full text-xs"
+                          />
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="Price"
+                              value={item.price}
+                              onChange={(e) =>
+                                setMenuItems((prev) =>
+                                  prev.map((i) =>
+                                    i.id === item.id
+                                      ? { ...i, price: parseFloat(e.target.value) || 0 }
+                                      : i
+                                  )
+                                )
+                              }
+                              className="w-24 px-2.5 py-1.5 border border-[var(--matte-black)] text-xs"
+                            />
+                            <label className="flex items-center gap-1.5 text-xs">
+                              <input
+                                type="checkbox"
+                                checked={item.available}
+                                onChange={(e) =>
+                                  setMenuItems((prev) =>
+                                    prev.map((i) =>
+                                      i.id === item.id ? { ...i, available: e.target.checked } : i
+                                    )
+                                  )
+                                }
+                                className="w-3.5 h-3.5"
+                              />
+                              Available
+                            </label>
+                          </div>
+                          <div className="flex gap-1.5">
+                            <button
+                              onClick={() => updateItem(item.id, undefined, { exitEdit: true })}
+                              className="px-3 py-1.5 bg-[var(--espresso-brown)] text-[var(--crisp-white)] text-xs hover:bg-[var(--matte-black)] transition-colors"
+                            >
+                              <Save size={12} className="inline mr-1" />
+                              Save
+                            </button>
+                            <button
+                              onClick={() => setEditingItem(null)}
+                              className="px-3 py-1.5 border border-[var(--matte-black)] text-xs hover:bg-[var(--cool-gray)] transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex gap-1.5">
-                          <button
-                            onClick={() => updateItem(item.id, undefined, { exitEdit: true })}
-                            className="px-3 py-1.5 bg-[var(--espresso-brown)] text-[var(--crisp-white)] text-xs hover:bg-[var(--matte-black)] transition-colors"
-                          >
-                            <Save size={12} className="inline mr-1" />
-                            Save
-                          </button>
-                          <button
-                            onClick={() => setEditingItem(null)}
-                            className="px-3 py-1.5 border border-[var(--matte-black)] text-xs hover:bg-[var(--cool-gray)] transition-colors"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
                       ) : (
                         <div className="flex items-stretch">
                           <div className="flex-1 p-3 flex flex-col justify-between min-h-[110px]">
@@ -1116,6 +1166,37 @@ export function MenuPage({
                               <p className="text-xs opacity-70 mb-2 line-clamp-2">
                                 {language === 'en' ? item.descriptionEn : item.descriptionAr}
                               </p>
+                              {canOrder && item.available && itemHasTemperatureChoice && (
+                                <div
+                                  className="flex w-fit max-w-full border border-[var(--matte-black)] bg-[var(--crisp-white)] mb-2"
+                                  role="group"
+                                  aria-label={text.temperature}
+                                >
+                                  {(['hot', 'iced'] as DrinkTemperature[]).map((temperature) => {
+                                    const selected = selectedTemperature === temperature;
+                                    return (
+                                      <button
+                                        key={temperature}
+                                        type="button"
+                                        onClick={() =>
+                                          setSelectedTemperatures((prev) => ({
+                                            ...prev,
+                                            [item.id]: temperature,
+                                          }))
+                                        }
+                                        className={`min-w-[58px] px-3 py-1.5 text-[11px] transition-colors ${
+                                          selected
+                                            ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]'
+                                            : 'text-[var(--matte-black)] hover:bg-[var(--cool-gray)]'
+                                        }`}
+                                        aria-pressed={selected}
+                                      >
+                                        {temperature === 'hot' ? text.hot : text.iced}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </div>
                             <div className="flex items-center justify-between">
                               <div className="text-sm">
@@ -1149,7 +1230,9 @@ export function MenuPage({
                                     <button
                                       onClick={() => changeItemQuantity(item, -1)}
                                       className="w-8 h-8 text-sm border-r border-[var(--matte-black)] hover:bg-[var(--cool-gray)] transition-colors"
-                                      aria-label={language === 'en' ? 'Decrease quantity' : 'تقليل الكمية'}
+                                      aria-label={
+                                        language === 'en' ? 'Decrease quantity' : 'تقليل الكمية'
+                                      }
                                     >
                                       -
                                     </button>
@@ -1159,7 +1242,9 @@ export function MenuPage({
                                     <button
                                       onClick={() => addToCart(item)}
                                       className="w-8 h-8 text-sm border-l border-[var(--matte-black)] hover:bg-[var(--cool-gray)] transition-colors"
-                                      aria-label={language === 'en' ? 'Increase quantity' : 'زيادة الكمية'}
+                                      aria-label={
+                                        language === 'en' ? 'Increase quantity' : 'زيادة الكمية'
+                                      }
                                     >
                                       +
                                     </button>
@@ -1169,7 +1254,7 @@ export function MenuPage({
                                     onClick={() => addToCart(item)}
                                     className="px-5 py-1.5 border border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)] hover:border-[var(--espresso-brown)] transition-colors text-xs"
                                   >
-                                    {lastAddedId === item.id
+                                    {lastAddedId === itemAddedKey
                                       ? language === 'en'
                                         ? 'Added ✓'
                                         : 'تمت الإضافة ✓'
@@ -1322,38 +1407,32 @@ export function MenuPage({
         <>
           <div style={{ height: 88 }} />
           <div
-            className="fixed left-0 right-0 z-40 bg-[var(--crisp-white)] border-t border-[var(--matte-black)]"
-            style={{ bottom: 0 }}
+            className="fixed left-0 right-0 z-40 px-4"
+            style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)' }}
           >
-            <div className="mx-auto px-4 py-3 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="relative w-10 h-10 rounded-full border border-[var(--matte-black)]/40 bg-[var(--crisp-white)] flex items-center justify-center">
-                  <ShoppingCart size={18} className="text-[var(--matte-black)]" />
-                  {cartItemCount > 0 && (
-                    <span
-                      className={
-                        `absolute -top-1 bg-[var(--crisp-white)] text-[var(--espresso-brown)] text-[10px] min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border border-[var(--espresso-brown)] ` +
-                        (isRTL ? '-left-1' : '-right-1')
-                      }
-                    >
-                      {cartItemCount}
-                    </span>
-                  )}
-                </div>
-                <div className="text-sm">
-                  <div className="text-[var(--matte-black)]">{text.cart}</div>
-                  <div className="text-[var(--matte-black)] opacity-70 text-xs">
-                    {cartTotal.toFixed(2)} {text.sar}
-                  </div>
-                </div>
-              </div>
-              <button
-                onClick={() => onOpenCart()}
-                className="px-5 py-2.5 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors text-sm border-2 border-[var(--espresso-brown)] hover:border-[var(--matte-black)]"
+            <button
+              onClick={() => onOpenCart()}
+              disabled={cartItemCount === 0}
+              dir="ltr"
+              className={`mx-auto w-full max-w-xl min-h-[52px] px-4 py-2 flex items-center justify-between gap-4 text-sm border-2 shadow-[0_10px_24px_rgba(0,0,0,0.2)] transition-colors ${
+                cartItemCount === 0
+                  ? 'bg-[var(--crisp-white)] text-[var(--matte-black)] border-[var(--matte-black)]/25 opacity-80 cursor-not-allowed'
+                  : 'bg-[var(--espresso-brown)] text-[var(--crisp-white)] border-[var(--espresso-brown)] hover:bg-[var(--matte-black)] hover:border-[var(--matte-black)]'
+              }`}
+            >
+              <span className="text-xs min-w-[86px] text-start" dir={isRTL ? 'rtl' : 'ltr'}>
+                {cartTotal.toFixed(2)} {text.sar}
+              </span>
+              <span className="flex-1 text-center" dir={isRTL ? 'rtl' : 'ltr'}>
+                {cartItemCount === 0 ? text.emptyCart : text.checkout}
+              </span>
+              <span
+                className="text-xs min-w-[86px] text-end opacity-80"
+                dir={isRTL ? 'rtl' : 'ltr'}
               >
-                {language === 'en' ? 'View Cart' : 'عرض السلة'}
-              </button>
-            </div>
+                {cartItemCount > 0 ? `${cartItemCount} ${text.items}` : ''}
+              </span>
+            </button>
           </div>
         </>
       )}

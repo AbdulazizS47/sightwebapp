@@ -14,13 +14,16 @@ import { ProfilePage } from './components/ProfilePage';
 
 type Page = 'landing' | 'menu' | 'contact' | 'dashboard' | 'admin-login' | 'profile' | 'order';
 type Language = 'en' | 'ar';
+type DrinkTemperature = 'hot' | 'iced';
 
 interface CartItem {
   id: string;
+  cartKey?: string;
   nameEn: string;
   nameAr: string;
   price: number;
   quantity: number;
+  temperature?: DrinkTemperature;
 }
 
 interface User {
@@ -204,7 +207,9 @@ export default function App() {
   // Sync URL hash with currentPage for direct navigation (e.g., #/dashboard and #/dashboard/<tab>)
   useEffect(() => {
     const applyHash = () => {
-      const raw = window.location.hash.replace('#/', '').trim();
+      const hashPath = window.location.hash.replace('#/', '').trim();
+      const pathname = window.location.pathname.replace(/^\/+/, '').trim();
+      const raw = hashPath || pathname;
       const [page, param] = raw.split('/');
       if (page === 'dashboard') {
         if (sessionToken && (user as any)?.role === 'admin') {

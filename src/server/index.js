@@ -1870,7 +1870,10 @@ app.post('/api/orders/create', async (c) => {
       .map((it) => {
         const quantity = Math.max(1, Math.min(99, Math.floor(Number(it?.quantity) || 1)));
         const id = String(it?.id || '').trim();
-        return { id, quantity };
+        const temperature = ['hot', 'iced'].includes(String(it?.options?.temperature || ''))
+          ? String(it.options.temperature)
+          : null;
+        return { id, quantity, options: temperature ? { temperature } : undefined };
       })
       .filter((it) => it.id);
 
@@ -1902,14 +1905,20 @@ app.post('/api/orders/create', async (c) => {
       const price = Number(row?.price || 0);
       const nameEn = String(row?.nameEn || '');
       const nameAr = String(row?.nameAr || '');
-      const name = effectiveLanguage === 'ar' ? nameAr || nameEn : nameEn || nameAr;
+      const temperature = it.options?.temperature;
+      const temperatureEn = temperature === 'hot' ? 'Hot' : temperature === 'iced' ? 'Iced' : '';
+      const temperatureAr = temperature === 'hot' ? 'ساخن' : temperature === 'iced' ? 'بارد' : '';
+      const displayNameEn = `${nameEn}${temperatureEn ? ` · ${temperatureEn}` : ''}`;
+      const displayNameAr = `${nameAr}${temperatureAr ? ` · ${temperatureAr}` : ''}`;
+      const name = effectiveLanguage === 'ar' ? displayNameAr || displayNameEn : displayNameEn || displayNameAr;
       return {
         id: it.id,
         name,
-        nameEn,
-        nameAr,
+        nameEn: displayNameEn,
+        nameAr: displayNameAr,
         price: Number.isFinite(price) ? price : 0,
         quantity: it.quantity,
+        ...(it.options ? { options: it.options } : {}),
       };
     });
 
