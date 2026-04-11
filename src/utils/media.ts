@@ -18,6 +18,7 @@ const getApiOrigin = () => {
 };
 
 const apiOrigin = getApiOrigin();
+const isAbsoluteHttpUrl = (value: string) => /^https?:\/\//i.test(value);
 
 export const resolveImageUrl = (input?: string | null) => {
   const raw = (input || '').trim();
@@ -28,8 +29,11 @@ export const resolveImageUrl = (input?: string | null) => {
     const base = getWindowOrigin() || 'http://localhost';
     const url = new URL(raw, base);
     if (url.pathname.startsWith('/uploads/')) {
-      if (apiOrigin && url.origin !== apiOrigin) {
+      if (!isAbsoluteHttpUrl(raw) && apiOrigin && url.origin !== apiOrigin) {
         return `${apiOrigin}${url.pathname}${url.search}`;
+      }
+      if (url.protocol === 'http:' && base.startsWith('https://')) {
+        url.protocol = 'https:';
       }
     }
     return url.toString();
