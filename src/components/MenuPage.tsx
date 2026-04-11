@@ -256,8 +256,8 @@ export function MenuPage({
         setMenuItems(
           data.items.map((it: any) => ({
             ...it,
-            descriptionEn: it.description ?? '',
-            descriptionAr: it.description ?? '',
+            descriptionEn: it.descriptionEn ?? it.description ?? '',
+            descriptionAr: it.descriptionAr ?? it.description ?? '',
             price: typeof it.price === 'number' ? it.price : parseFloat(it.price) || 0,
           }))
         );
@@ -397,6 +397,8 @@ export function MenuPage({
           ...merged,
           // Map description fields for backend compatibility
           description: merged?.descriptionEn || merged?.descriptionAr || '',
+          descriptionEn: merged?.descriptionEn || '',
+          descriptionAr: merged?.descriptionAr || '',
         }),
       });
 
@@ -490,6 +492,8 @@ export function MenuPage({
           available: !item.available,
           price: Number(item.price ?? 0),
           description: item.descriptionEn || item.descriptionAr || '',
+          descriptionEn: item.descriptionEn || '',
+          descriptionAr: item.descriptionAr || '',
         }),
       });
 
@@ -524,6 +528,8 @@ export function MenuPage({
           price: Number(newItem.price || 0),
           category: activeCategory,
           description: newItem.descriptionEn || newItem.descriptionAr || '',
+          descriptionEn: newItem.descriptionEn || '',
+          descriptionAr: newItem.descriptionAr || '',
         }),
       });
 

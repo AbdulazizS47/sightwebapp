@@ -1785,7 +1785,23 @@ app.post('/api/admin/menu/item', async (c) => {
   const unauthorized = await requireAdmin(c);
   if (unauthorized) return unauthorized;
   const body = await c.req.json();
-  let { id, nameEn, nameAr, price, category, description, imageUrl, available } = body;
+  let {
+    id,
+    nameEn,
+    nameAr,
+    price,
+    category,
+    description,
+    descriptionEn,
+    descriptionAr,
+    imageUrl,
+    available,
+  } = body;
+  const hasDescriptionEn = Object.prototype.hasOwnProperty.call(body, 'descriptionEn');
+  const hasDescriptionAr = Object.prototype.hasOwnProperty.call(body, 'descriptionAr');
+  descriptionEn = hasDescriptionEn ? descriptionEn || null : description || null;
+  descriptionAr = hasDescriptionAr ? descriptionAr || null : description || null;
+  description = descriptionEn || descriptionAr || null;
   if (!id) {
     const base =
       (nameEn || '')
@@ -1797,8 +1813,8 @@ app.post('/api/admin/menu/item', async (c) => {
     id = `${base}-${Math.random().toString(36).slice(2, 8)}`;
   }
   await pool.execute(
-    'INSERT INTO items (id, nameEn, nameAr, price, category, description, imageUrl, available) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, nameEn, nameAr, price, category, description || null, imageUrl || null, available ? 1 : 0]
+    'INSERT INTO items (id, nameEn, nameAr, price, category, description, descriptionEn, descriptionAr, imageUrl, available) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, nameEn, nameAr, price, category, description, descriptionEn, descriptionAr, imageUrl || null, available ? 1 : 0]
   );
   return c.json({
     success: true,
@@ -1808,7 +1824,9 @@ app.post('/api/admin/menu/item', async (c) => {
       nameAr,
       price,
       category,
-      description: description || null,
+      description,
+      descriptionEn,
+      descriptionAr,
       imageUrl: imageUrl || null,
       available: !!available,
     },
@@ -1820,10 +1838,25 @@ app.put('/api/admin/menu/item/:id', async (c) => {
   if (unauthorized) return unauthorized;
   const id = c.req.param('id');
   const body = await c.req.json();
-  const { nameEn, nameAr, price, category, description, imageUrl, available } = body;
+  let {
+    nameEn,
+    nameAr,
+    price,
+    category,
+    description,
+    descriptionEn,
+    descriptionAr,
+    imageUrl,
+    available,
+  } = body;
+  const hasDescriptionEn = Object.prototype.hasOwnProperty.call(body, 'descriptionEn');
+  const hasDescriptionAr = Object.prototype.hasOwnProperty.call(body, 'descriptionAr');
+  descriptionEn = hasDescriptionEn ? descriptionEn || null : description || null;
+  descriptionAr = hasDescriptionAr ? descriptionAr || null : description || null;
+  description = descriptionEn || descriptionAr || null;
   await pool.execute(
-    'UPDATE items SET nameEn=?, nameAr=?, price=?, category=?, description=?, imageUrl=?, available=? WHERE id=?',
-    [nameEn, nameAr, price, category, description || null, imageUrl || null, available ? 1 : 0, id]
+    'UPDATE items SET nameEn=?, nameAr=?, price=?, category=?, description=?, descriptionEn=?, descriptionAr=?, imageUrl=?, available=? WHERE id=?',
+    [nameEn, nameAr, price, category, description, descriptionEn, descriptionAr, imageUrl || null, available ? 1 : 0, id]
   );
   return c.json({
     success: true,
@@ -1833,7 +1866,9 @@ app.put('/api/admin/menu/item/:id', async (c) => {
       nameAr,
       price,
       category,
-      description: description || null,
+      description,
+      descriptionEn,
+      descriptionAr,
       imageUrl: imageUrl || null,
       available: !!available,
     },

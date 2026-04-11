@@ -114,6 +114,8 @@ export async function initSchema() {
       price DECIMAL(10,2) NOT NULL,
       category VARCHAR(64) NOT NULL,
       description TEXT NULL,
+      descriptionEn TEXT NULL,
+      descriptionAr TEXT NULL,
       imageUrl VARCHAR(1024) NULL,
       available TINYINT(1) NOT NULL DEFAULT 1,
       FOREIGN KEY (category) REFERENCES categories(id) ON DELETE CASCADE
@@ -282,6 +284,8 @@ export async function initSchema() {
   };
 
   await ensureColumn('ALTER TABLE sessions ADD COLUMN expiresAt BIGINT NULL');
+  await ensureColumn('ALTER TABLE items ADD COLUMN descriptionEn TEXT NULL');
+  await ensureColumn('ALTER TABLE items ADD COLUMN descriptionAr TEXT NULL');
   await ensureIndex('CREATE UNIQUE INDEX idx_orders_orderNumber ON orders(orderNumber)');
   await ensureIndex('CREATE INDEX idx_orders_date_display ON orders(dateKey, displayNumber)');
   await ensureIndex('CREATE INDEX idx_orders_createdAt ON orders(createdAt)');

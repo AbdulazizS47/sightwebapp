@@ -391,8 +391,8 @@ export function AdminPanel({
         setMenuItems(
           (data.items || []).map((i: any) => ({
             ...i,
-            descriptionEn: i.description ?? i.descriptionEn ?? '',
-            descriptionAr: i.description ?? i.descriptionAr ?? '',
+            descriptionEn: i.descriptionEn ?? i.description ?? '',
+            descriptionAr: i.descriptionAr ?? i.description ?? '',
           }))
         );
       } else {
@@ -459,6 +459,8 @@ export function AdminPanel({
         body: JSON.stringify({
           ...itemToAdd,
           description: itemToAdd.descriptionEn ?? itemToAdd.descriptionAr ?? '',
+          descriptionEn: itemToAdd.descriptionEn ?? '',
+          descriptionAr: itemToAdd.descriptionAr ?? '',
         }),
       });
 
@@ -469,8 +471,8 @@ export function AdminPanel({
           ...prev,
           {
             ...data.item,
-            descriptionEn: data.item.description ?? '',
-            descriptionAr: data.item.description ?? '',
+            descriptionEn: data.item.descriptionEn ?? data.item.description ?? '',
+            descriptionAr: data.item.descriptionAr ?? data.item.description ?? '',
           },
         ]);
         setNewItem({
@@ -554,6 +556,8 @@ export function AdminPanel({
         body: JSON.stringify({
           ...merged,
           description: merged?.descriptionEn ?? merged?.descriptionAr ?? '',
+          descriptionEn: merged?.descriptionEn ?? '',
+          descriptionAr: merged?.descriptionAr ?? '',
         }),
       });
 
@@ -568,8 +572,8 @@ export function AdminPanel({
               ? {
                   ...i,
                   ...data.item,
-                  descriptionEn: data.item.description ?? '',
-                  descriptionAr: data.item.description ?? '',
+                  descriptionEn: data.item.descriptionEn ?? data.item.description ?? '',
+                  descriptionAr: data.item.descriptionAr ?? data.item.description ?? '',
                 }
               : i
           )
