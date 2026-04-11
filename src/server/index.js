@@ -524,7 +524,7 @@ app.get('/uploads/:filename', async (c) => {
     return new Response(data, {
       headers: {
         'Content-Type': contentType,
-        'Cache-Control': 'public, max-age=31536000',
+        'Cache-Control': 'public, max-age=31536000, immutable',
       },
     });
   } catch {

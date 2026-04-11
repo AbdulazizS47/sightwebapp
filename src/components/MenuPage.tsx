@@ -1,14 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import {
-  Plus,
-  ShoppingBag,
-  ArrowLeft,
-  Edit2,
-  Save,
-  Trash2,
-  Coffee,
-  Slash,
-} from 'lucide-react';
+import { Plus, ShoppingBag, ArrowLeft, Edit2, Save, Trash2, Coffee, Slash } from 'lucide-react';
 import categoryFallback from 'figma:asset/6a698afc3834913c1c2ac422fa5bd04b815dc28c.png';
 import coffeeIcon from '../assets/COFFEE.png';
 import v60Icon from '../assets/V60.png';
@@ -216,6 +207,31 @@ export function MenuPage({
     }
     setCardQuantities(next);
   }, [cartItems]);
+
+  useEffect(() => {
+    if (!menuItems.length) return;
+    const urls = Array.from(
+      new Set(menuItems.map((item) => resolveImageUrl(item.imageUrl)).filter(Boolean))
+    );
+    if (!urls.length) return;
+
+    const preload = () => {
+      for (const url of urls) {
+        const image = new Image();
+        image.decoding = 'async';
+        image.loading = 'eager';
+        image.src = url;
+      }
+    };
+
+    if ('requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(preload, { timeout: 1200 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+
+    const timeoutId = window.setTimeout(preload, 150);
+    return () => window.clearTimeout(timeoutId);
+  }, [menuItems]);
 
   const loadMenu = async () => {
     setLoading(true);
@@ -1278,7 +1294,8 @@ export function MenuPage({
                                 src={resolveImageUrl(item.imageUrl)}
                                 alt={language === 'en' ? item.nameEn : item.nameAr}
                                 className="w-full h-full object-cover"
-                                loading="lazy"
+                                loading="eager"
+                                decoding="async"
                               />
                             </div>
                           )}
