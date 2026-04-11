@@ -46,6 +46,7 @@ Important server variables:
 - `PUBLIC_BASE_URL`
 - `CORS_ORIGINS`
 - `SMS_PROVIDER`
+- `OTP_WEB_ORIGIN`
 - `ADMIN_PHONE`
 - `PRINT_DEVICE_KEY`
 
@@ -68,6 +69,7 @@ Important frontend variables:
 - The `/uploads` directory is not persistent on Railway. Move uploads to object storage if long-term retention is required.
 - The Android print bridge must remain on the tablet because Bluetooth printing is local to the device.
 - `SMS_PROVIDER=console` should not be used on a live service unless you intentionally want OTPs logged instead of sent.
+- For Android OTP suggestions, set `OTP_WEB_ORIGIN` to the customer-facing site host and make the SMS provider template end with `@your-domain #OTP_CODE`.
 
 ## Deployment
 

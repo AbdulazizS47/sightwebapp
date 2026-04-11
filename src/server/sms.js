@@ -2,12 +2,45 @@ import 'dotenv/config';
 
 const provider = (process.env.SMS_PROVIDER || 'console').trim().toLowerCase();
 
+function normalizeWebOtpOrigin(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  try {
+    return new URL(raw.startsWith('http') ? raw : `https://${raw}`).host;
+  } catch {
+    return raw
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/.*$/, '')
+      .trim();
+  }
+}
+
+function getWebOtpLine(code) {
+  const origin = normalizeWebOtpOrigin(
+    process.env.OTP_WEB_ORIGIN ||
+      process.env.WEB_OTP_ORIGIN ||
+      process.env.APP_PUBLIC_ORIGIN ||
+      process.env.FRONTEND_ORIGIN ||
+      process.env.PUBLIC_APP_URL
+  );
+
+  return origin ? `\n\n@${origin} #${code}` : '';
+}
+
 function buildMessage(code, language) {
   const tpl = (process.env.OTP_MESSAGE_TEMPLATE || '').trim();
-  if (tpl) return tpl.replace(/\{code\}/g, code);
+  const webOtpLine = getWebOtpLine(code);
+  if (tpl) {
+    const message = tpl
+      .replace(/\{code\}/g, code)
+      .replace(/\{web_otp_line\}/g, webOtpLine)
+      .replace(/\{otp_origin\}/g, webOtpLine.trim().replace(/^@/, '').replace(/\s+#.+$/, ''));
+    return message.includes(webOtpLine.trim()) ? message : `${message}${webOtpLine}`;
+  }
 
-  if (language === 'ar') return `رمز التحقق الخاص بك هو: ${code}`;
-  return `Your verification code is: ${code}`;
+  if (language === 'ar') return `رمز التحقق الخاص بك هو: ${code}${webOtpLine}`;
+  return `Your SIGHT verification code is: ${code}${webOtpLine}`;
 }
 
 async function sendViaAuthentica({ phoneNumber, code, language, method: methodOverride }) {

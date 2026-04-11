@@ -29,8 +29,12 @@ Recommended (OTP/SMS):
 - `AUTHENTICA_TEMPLATE_ID`
 - `AUTHENTICA_METHOD`
 - `PUBLIC_BASE_URL=https://api.sightcoffeespace.com`
+- `OTP_WEB_ORIGIN=sightcoffeespace.com`
 - `OTP_DEV_MODE=false` on live Railway services
 - `OTP_DEV_MODE=true` only for temporary testing without SMS
+
+For Android OTP keyboard suggestions/WebOTP, the Authentica SMS template should include the
+customer-facing site host on the final line, for example `@sightcoffeespace.com #{{otp}}`.
 
 Optional:
 - `ADMIN_TOKEN`
