@@ -212,7 +212,7 @@ export function MenuPage({
     if (!menuItems.length) return;
     const urls = Array.from(
       new Set(menuItems.map((item) => resolveImageUrl(item.imageUrl)).filter(Boolean))
-    );
+    ).slice(0, 8);
     if (!urls.length) return;
 
     const preload = () => {
@@ -1294,7 +1294,7 @@ export function MenuPage({
                                 src={resolveImageUrl(item.imageUrl)}
                                 alt={language === 'en' ? item.nameEn : item.nameAr}
                                 className="w-full h-full object-cover"
-                                loading="eager"
+                                loading="lazy"
                                 decoding="async"
                               />
                             </div>

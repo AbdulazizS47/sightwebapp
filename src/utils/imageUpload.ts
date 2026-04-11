@@ -1,10 +1,9 @@
 const MAX_UPLOAD_SOURCE_IMAGE_BYTES = 15 * 1024 * 1024;
-export const MAX_UPLOAD_IMAGE_BYTES = 1024 * 1024;
-export const MAX_UPLOAD_IMAGE_DIMENSION = 1600;
+export const MAX_UPLOAD_IMAGE_BYTES = 650 * 1024;
+export const MAX_UPLOAD_IMAGE_DIMENSION = 1200;
 
-const OUTPUT_IMAGE_TYPES = ['image/webp', 'image/jpeg'] as const;
+const OUTPUT_IMAGE_TYPES = ['image/jpeg'] as const;
 const OUTPUT_EXTENSIONS: Record<(typeof OUTPUT_IMAGE_TYPES)[number], string> = {
-  'image/webp': '.webp',
   'image/jpeg': '.jpg',
 };
 
@@ -85,6 +84,7 @@ export const prepareImageUpload = async (file: File) => {
   const initialSize = getScaledSize(image.naturalWidth || image.width, image.naturalHeight || image.height, MAX_UPLOAD_IMAGE_DIMENSION);
 
   if (
+    file.type === 'image/jpeg' &&
     initialSize.width === (image.naturalWidth || image.width) &&
     initialSize.height === (image.naturalHeight || image.height) &&
     file.size <= MAX_UPLOAD_IMAGE_BYTES
@@ -107,6 +107,8 @@ export const prepareImageUpload = async (file: File) => {
       throw new Error('Image processing is not available in this browser');
     }
 
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
     ctx.drawImage(image, 0, 0, width, height);
 
     for (const outputType of OUTPUT_IMAGE_TYPES) {

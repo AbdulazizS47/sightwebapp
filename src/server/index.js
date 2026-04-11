@@ -136,7 +136,7 @@ const EXT_TO_IMAGE_CONTENT_TYPE = {
   '.heic': 'image/heic',
   '.heif': 'image/heif',
 };
-const UPLOAD_ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const UPLOAD_ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png']);
 const MAX_UPLOAD_IMAGE_BYTES = 1024 * 1024;
 // In-memory cache of sessions (persistent store is MySQL)
 const sessions = new Map();
@@ -2834,7 +2834,7 @@ app.post('/api/admin/upload-image', async (c) => {
       return c.json({ error: 'Only image uploads are allowed' }, 400);
     }
     if (!UPLOAD_ALLOWED_IMAGE_TYPES.has(effectiveImageType)) {
-      return c.json({ error: 'Unsupported image format. Please upload JPG, PNG, or WEBP.' }, 400);
+      return c.json({ error: 'Unsupported image format. Please upload JPG or PNG.' }, 400);
     }
     if (size > MAX_UPLOAD_IMAGE_BYTES) {
       return c.json({ error: 'Image too large (max 1MB)' }, 400);
