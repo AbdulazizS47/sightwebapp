@@ -46,6 +46,11 @@ function formatPhone(value) {
   return raw.startsWith('+') ? raw : `+${raw}`;
 }
 
+function formatCustomerName(value) {
+  const name = String(value || '').trim();
+  return name || '-';
+}
+
 function formatOrderItem(item) {
   const quantity = Math.max(1, Number(item?.quantity || 1));
   const name = String(item?.nameEn || item?.name || item?.nameAr || item?.id || 'Item').trim();
@@ -86,6 +91,7 @@ export function buildNewOrderMessage(order) {
     `Total: ${formatMoney(order?.totalWithVat ?? order?.total)} SAR`,
     `Payment: ${String(order?.paymentMethod || 'cash')}`,
     `Customer: ${formatPhone(order?.phoneNumber)}`,
+    `Name: ${formatCustomerName(order?.userName)}`,
     '',
     'Items:',
     `${itemLines}${moreLine}`,
