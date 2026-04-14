@@ -8,6 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pool, initSchema, ensureDatabase } from './db.js';
 import { sendOtpSms } from './sms.js';
+import { getOrderNotificationStatus, sendNewOrderNotification } from './notifications.js';
 
 const app = new Hono();
 const printApi = new Hono();
@@ -174,6 +175,18 @@ if (OTP_DEBUG_RETURN_CODE_CONFIGURED && IS_PRODUCTION) {
 }
 if (SMS_PROVIDER === 'console' && !OTP_DEV_MODE) {
   logStartupWarning('SMS_PROVIDER is "console"; OTPs will be logged to stdout.');
+}
+const ORDER_NOTIFICATION_STATUS = getOrderNotificationStatus();
+if (!ORDER_NOTIFICATION_STATUS.enabled) {
+  logStartupWarning(
+    'Order notifications are disabled; set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable Telegram alerts.'
+  );
+} else if (!ORDER_NOTIFICATION_STATUS.telegramConfigured) {
+  logStartupWarning('Order notifications are enabled but Telegram bot token or chat id is missing.');
+} else {
+  console.log(
+    `[startup] Telegram order notifications enabled for ${ORDER_NOTIFICATION_STATUS.chatCount} chat(s).`
+  );
 }
 
 function hashSessionToken(token) {
@@ -2281,6 +2294,13 @@ app.post('/api/orders/create', async (c) => {
     if (inventoryWarnings) {
       responsePayload.inventoryWarnings = inventoryWarnings;
     }
+
+    sendNewOrderNotification(orderSummary).catch((notificationError) => {
+      console.error('Failed to send new order notification', {
+        orderId,
+        error: notificationError?.message || notificationError,
+      });
+    });
 
     return c.json(responsePayload);
   } catch (e) {
