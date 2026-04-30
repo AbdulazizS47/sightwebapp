@@ -46,6 +46,10 @@ const MYSQL_SSL_REJECT_UNAUTHORIZED =
 const MYSQL_CONNECT_TIMEOUT = Math.max(Number(env.MYSQL_CONNECT_TIMEOUT || 10000) || 10000, 1000);
 const MYSQL_SKIP_CREATE_DB =
   (env.MYSQL_SKIP_CREATE_DB || '').trim().toLowerCase() === 'true';
+const NODE_ENV = (env.NODE_ENV || 'development').trim().toLowerCase();
+const IS_PRODUCTION = NODE_ENV === 'production';
+const DEV_SEED_DISCOUNT_CODES =
+  !IS_PRODUCTION && (env.DEV_SEED_DISCOUNT_CODES || 'true').trim().toLowerCase() !== 'false';
 
 const sslConfig = MYSQL_SSL ? { rejectUnauthorized: MYSQL_SSL_REJECT_UNAUTHORIZED } : undefined;
 
@@ -143,6 +147,25 @@ export async function initSchema() {
     CREATE TABLE IF NOT EXISTS order_counters (
       dateKey VARCHAR(16) PRIMARY KEY,
       currentNumber INT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS discount_codes (
+      code VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      type VARCHAR(16) NOT NULL,
+      value DECIMAL(10,2) NOT NULL,
+      minSubtotal DECIMAL(10,2) NOT NULL DEFAULT 0,
+      maxDiscount DECIMAL(10,2) NULL,
+      startsAt BIGINT NULL,
+      endsAt BIGINT NULL,
+      usageLimitTotal INT NULL,
+      usageLimitPerUser INT NULL,
+      combinableWithLoyalty TINYINT(1) NOT NULL DEFAULT 0,
+      active TINYINT(1) NOT NULL DEFAULT 1,
+      createdAt BIGINT NOT NULL,
+      updatedAt BIGINT NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
@@ -294,10 +317,14 @@ export async function initSchema() {
   await ensureIndex('CREATE INDEX idx_orders_completedAt ON orders(completedAt)');
   await ensureIndex('CREATE INDEX idx_orders_userId ON orders(userId)');
   await ensureIndex('CREATE INDEX idx_orders_phoneNumber ON orders(phoneNumber)');
+  await ensureColumn('ALTER TABLE orders ADD COLUMN discountCode VARCHAR(64) NULL');
+  await ensureColumn('ALTER TABLE orders ADD COLUMN discountAmount DECIMAL(10,2) NULL');
+  await ensureIndex('CREATE INDEX idx_orders_discountCode ON orders(discountCode)');
   await ensureColumn('ALTER TABLE print_jobs ADD COLUMN claimToken VARCHAR(64) NULL');
   await ensureIndex('CREATE INDEX idx_print_jobs_status_created ON print_jobs(status, createdAt)');
   await ensureIndex('CREATE INDEX idx_print_jobs_orderId ON print_jobs(orderId)');
   await ensureIndex('CREATE INDEX idx_print_jobs_claimToken ON print_jobs(claimToken)');
+  await ensureIndex('CREATE INDEX idx_discount_codes_active ON discount_codes(active, code)');
   await ensureIndex('CREATE INDEX idx_inventory_items_type_active ON inventory_items(type, active)');
   await ensureIndex('CREATE INDEX idx_inventory_items_nameEn ON inventory_items(nameEn)');
   await ensureIndex('CREATE INDEX idx_inventory_usage_menu ON inventory_usage_rules(menuItemId)');
@@ -309,6 +336,63 @@ export async function initSchema() {
   await ensureIndex(
     'CREATE INDEX idx_inventory_movements_reason_created ON inventory_movements(reason, createdAt)'
   );
+
+  if (DEV_SEED_DISCOUNT_CODES) {
+    const now = Date.now();
+    await pool.execute(
+      `INSERT IGNORE INTO discount_codes
+       (code, name, type, value, minSubtotal, maxDiscount, startsAt, endsAt, usageLimitTotal, usageLimitPerUser, combinableWithLoyalty, active, createdAt, updatedAt)
+       VALUES
+       (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?),
+       (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?),
+       (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?),
+       (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)`,
+      [
+        'WELCOME10',
+        'Welcome 10% Off',
+        'percent',
+        10,
+        0,
+        15,
+        0,
+        1,
+        now,
+        now,
+        'SIGHT15',
+        'Sight 15 SAR Off',
+        'fixed',
+        15,
+        40,
+        15,
+        0,
+        1,
+        now,
+        now,
+        'MISSU',
+        'Miss You 9 SAR Off',
+        'fixed',
+        9,
+        0,
+        9,
+        1,
+        0,
+        1,
+        now,
+        now,
+        'اشتقت',
+        'اشتقت - خصم 9 ريال',
+        'fixed',
+        9,
+        0,
+        9,
+        1,
+        0,
+        1,
+        now,
+        now,
+      ]
+    );
+  }
 }
 
 export async function getTodayNextDisplayNumber(dateKey) {

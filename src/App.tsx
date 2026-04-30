@@ -55,6 +55,8 @@ export default function App() {
   const [pendingHash, setPendingHash] = useState<string | null>(null);
   const [returnToCartAfterAuth, setReturnToCartAfterAuth] = useState(false);
   const [adminMenuMode, setAdminMenuMode] = useState<'edit' | 'order'>('order');
+  const [cartDiscountCode, setCartDiscountCode] = useState('');
+  const [appliedCartDiscountCode, setAppliedCartDiscountCode] = useState<string | null>(null);
 
   // Set viewport meta tag for proper mobile rendering
   useEffect(() => {
@@ -195,6 +197,8 @@ export default function App() {
     setSessionToken(null);
     localStorage.removeItem('sessionToken');
     setCartItems([]);
+    setCartDiscountCode('');
+    setAppliedCartDiscountCode(null);
     setShowCart(false);
     setAdminMenuMode('order');
     setCurrentPage('landing');
@@ -299,6 +303,8 @@ export default function App() {
     setCompletedOrderId(orderId);
     setCompletedOrderData(orderData);
     setCartItems([]);
+    setCartDiscountCode('');
+    setAppliedCartDiscountCode(null);
     try {
       localStorage.setItem('lastOrderId', orderId);
     } catch {
@@ -425,6 +431,10 @@ export default function App() {
           onAuthRequired={handleAuthRequired}
           sessionToken={sessionToken}
           language={language}
+          discountCodeInput={cartDiscountCode}
+          onDiscountCodeInputChange={setCartDiscountCode}
+          appliedDiscountCode={appliedCartDiscountCode}
+          onAppliedDiscountCodeChange={setAppliedCartDiscountCode}
         />
       )}
 

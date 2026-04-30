@@ -139,6 +139,9 @@ const EXT_TO_IMAGE_CONTENT_TYPE = {
 };
 const UPLOAD_ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png']);
 const MAX_UPLOAD_IMAGE_BYTES = 1024 * 1024;
+const ORDER_VAT_RATE = 0.15;
+const LOYALTY_HALF_OFF_MAX_DISCOUNT = 20;
+const BUILD_DIR = path.join(process.cwd(), 'build');
 // In-memory cache of sessions (persistent store is MySQL)
 const sessions = new Map();
 
@@ -342,6 +345,293 @@ async function getCurrentDateKey() {
   return getDateKeyInTimeZone(new Date(), timeZone || DEFAULT_TIMEZONE);
 }
 
+function roundMoney(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+}
+
+function normalizeDiscountCode(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '');
+}
+
+function createHttpError(status, message, details = {}) {
+  const error = new Error(message);
+  error.status = status;
+  Object.assign(error, details);
+  return error;
+}
+
+async function loadCanonicalOrderItems(items, effectiveLanguage, db = pool) {
+  const normalizedItems = (Array.isArray(items) ? items : [])
+    .map((it) => {
+      const quantity = Math.max(1, Math.min(99, Math.floor(Number(it?.quantity) || 1)));
+      const id = String(it?.id || '').trim();
+      const temperature = ['hot', 'iced'].includes(String(it?.options?.temperature || ''))
+        ? String(it.options.temperature)
+        : null;
+      return { id, quantity, options: temperature ? { temperature } : undefined };
+    })
+    .filter((it) => it.id);
+
+  if (normalizedItems.length === 0) {
+    throw createHttpError(400, 'Invalid items payload');
+  }
+
+  const ids = Array.from(new Set(normalizedItems.map((it) => it.id)));
+  const placeholders = ids.map(() => '?').join(',');
+  const [rows] = await db.execute(
+    `SELECT id, nameEn, nameAr, price, available FROM items WHERE id IN (${placeholders})`,
+    ids
+  );
+  const byId = new Map((Array.isArray(rows) ? rows : []).map((row) => [String(row.id), row]));
+  const missing = ids.filter((id) => !byId.has(id));
+  if (missing.length > 0) {
+    throw createHttpError(400, 'Some items were not found', { missing });
+  }
+  const unavailable = ids.filter((id) => {
+    const row = byId.get(id);
+    return row && Number(row.available) === 0;
+  });
+  if (unavailable.length > 0) {
+    throw createHttpError(400, 'Some items are unavailable', { unavailable });
+  }
+
+  const canonicalItems = normalizedItems.map((it) => {
+    const row = byId.get(it.id);
+    const price = Number(row?.price || 0);
+    const nameEn = String(row?.nameEn || '');
+    const nameAr = String(row?.nameAr || '');
+    const temperature = it.options?.temperature;
+    const temperatureEn = temperature === 'hot' ? 'Hot' : temperature === 'iced' ? 'Iced' : '';
+    const temperatureAr = temperature === 'hot' ? 'ساخن' : temperature === 'iced' ? 'بارد' : '';
+    const displayNameEn = `${nameEn}${temperatureEn ? ` · ${temperatureEn}` : ''}`;
+    const displayNameAr = `${nameAr}${temperatureAr ? ` · ${temperatureAr}` : ''}`;
+    const name =
+      effectiveLanguage === 'ar' ? displayNameAr || displayNameEn : displayNameEn || displayNameAr;
+    return {
+      id: it.id,
+      name,
+      nameEn: displayNameEn,
+      nameAr: displayNameAr,
+      price: Number.isFinite(price) ? price : 0,
+      quantity: it.quantity,
+      ...(it.options ? { options: it.options } : {}),
+    };
+  });
+
+  return {
+    normalizedItems,
+    ids,
+    placeholders,
+    canonicalItems,
+  };
+}
+
+async function getDiscountCodeRecord(code, db = pool) {
+  const normalizedCode = normalizeDiscountCode(code);
+  if (!normalizedCode) return null;
+  const [rows] = await db.execute('SELECT * FROM discount_codes WHERE code = ? LIMIT 1', [
+    normalizedCode,
+  ]);
+  return Array.isArray(rows) && rows[0] ? rows[0] : null;
+}
+
+async function getDiscountCodeUsage(code, userId, db = pool) {
+  const normalizedCode = normalizeDiscountCode(code);
+  if (!normalizedCode) return { totalUses: 0, userUses: 0 };
+  const [totalRows] = await db.execute(
+    'SELECT COUNT(*) AS totalUses FROM orders WHERE discountCode = ?',
+    [normalizedCode]
+  );
+  const totalUses = Number(totalRows?.[0]?.totalUses || 0);
+  if (!userId) {
+    return { totalUses, userUses: 0 };
+  }
+  const [userRows] = await db.execute(
+    'SELECT COUNT(*) AS userUses FROM orders WHERE discountCode = ? AND userId = ?',
+    [normalizedCode, userId]
+  );
+  return {
+    totalUses,
+    userUses: Number(userRows?.[0]?.userUses || 0),
+  };
+}
+
+async function buildOrderPricing({
+  canonicalItems,
+  effectiveUserId,
+  effectiveLanguage,
+  redeemReward,
+  discountCode,
+  db = pool,
+  strictDiscountCode = false,
+}) {
+  const computeTotal = (arr) =>
+    roundMoney(
+      arr.reduce((sum, item) => sum + (Number(item.price) || 0) * (Number(item.quantity) || 0), 0)
+    );
+
+  const itemsTotal = computeTotal(canonicalItems);
+  let effectiveItems = canonicalItems.map((item) => ({ ...item }));
+  let effectiveTotal = itemsTotal;
+  let rewardType = null;
+  let rewardDiscountAmount = 0;
+
+  if (effectiveUserId && redeemReward) {
+    const [rows] = await db.execute(
+      'SELECT points FROM loyalty_accounts WHERE userId = ? AND enabled = 1',
+      [effectiveUserId]
+    );
+    const points = Number(rows?.[0]?.points || 0);
+    const stamps = points > 0 ? ((points - 1) % 6) + 1 : 0;
+    rewardType = stamps === 3 ? 'free' : stamps === 6 ? 'half' : null;
+
+    if (rewardType === 'free') {
+      const maxUnitPrice = effectiveItems.reduce(
+        (max, item) => Math.max(max, Number(item.price) || 0),
+        0
+      );
+      const discount = roundMoney(Math.min(maxUnitPrice, effectiveTotal));
+      if (discount > 0) {
+        rewardDiscountAmount = discount;
+        effectiveItems = [
+          ...effectiveItems,
+          {
+            id: 'reward-discount',
+            name: effectiveLanguage === 'ar' ? 'خصم المكافأة' : 'Reward discount',
+            price: -discount,
+            quantity: 1,
+          },
+        ];
+        effectiveTotal = roundMoney(Math.max(0, effectiveTotal - discount));
+      }
+    } else if (rewardType === 'half') {
+      const discount = roundMoney(Math.min(effectiveTotal * 0.5, LOYALTY_HALF_OFF_MAX_DISCOUNT));
+      if (discount > 0) {
+        rewardDiscountAmount = discount;
+        effectiveItems = [
+          ...effectiveItems,
+          {
+            id: 'reward-discount',
+            name: effectiveLanguage === 'ar' ? 'خصم المكافأة' : 'Reward discount',
+            price: -discount,
+            quantity: 1,
+          },
+        ];
+        effectiveTotal = roundMoney(Math.max(0, effectiveTotal - discount));
+      }
+    }
+  }
+
+  const discountCodeRequested = normalizeDiscountCode(discountCode);
+  let discountCodeApplied = false;
+  let appliedDiscountCode = null;
+  let appliedDiscountName = null;
+  let discountCodeAmount = 0;
+  let discountCodeError = null;
+
+  if (discountCodeRequested) {
+    const codeRow = await getDiscountCodeRecord(discountCodeRequested, db);
+    const failDiscountCode = (message) => {
+      if (strictDiscountCode) {
+        throw createHttpError(400, message, { discountCode: discountCodeRequested });
+      }
+      discountCodeError = message;
+    };
+
+    if (!codeRow) {
+      failDiscountCode('Discount code was not found');
+    } else if (Number(codeRow.active) === 0) {
+      failDiscountCode('Discount code is inactive');
+    } else if (codeRow.startsAt != null && Number(codeRow.startsAt) > Date.now()) {
+      failDiscountCode('Discount code is not active yet');
+    } else if (codeRow.endsAt != null && Number(codeRow.endsAt) < Date.now()) {
+      failDiscountCode('Discount code has expired');
+    } else if (rewardDiscountAmount > 0 && Number(codeRow.combinableWithLoyalty) === 0) {
+      failDiscountCode('Discount code cannot be combined with loyalty rewards');
+    } else if (itemsTotal < roundMoney(codeRow.minSubtotal)) {
+      failDiscountCode(
+        `Minimum order for this code is ${roundMoney(codeRow.minSubtotal).toFixed(2)} SAR`
+      );
+    } else {
+      const usageLimitTotal =
+        codeRow.usageLimitTotal != null ? Number(codeRow.usageLimitTotal) : null;
+      const usageLimitPerUser =
+        codeRow.usageLimitPerUser != null ? Number(codeRow.usageLimitPerUser) : null;
+
+      if (usageLimitPerUser != null && !effectiveUserId) {
+        failDiscountCode('Sign in is required to use this discount code');
+      } else {
+        const usage = await getDiscountCodeUsage(discountCodeRequested, effectiveUserId, db);
+        if (usageLimitTotal != null && usage.totalUses >= usageLimitTotal) {
+          failDiscountCode('Discount code usage limit has been reached');
+        } else if (usageLimitPerUser != null && usage.userUses >= usageLimitPerUser) {
+          failDiscountCode('You have already used this discount code');
+        } else {
+          const codeType = String(codeRow.type || '').trim().toLowerCase();
+          const rawValue = Number(codeRow.value || 0);
+          const maxDiscount =
+            codeRow.maxDiscount != null ? roundMoney(codeRow.maxDiscount) : null;
+          let rawDiscount =
+            codeType === 'percent' ? effectiveTotal * (rawValue / 100) : roundMoney(rawValue);
+          if (!Number.isFinite(rawDiscount) || rawDiscount <= 0) {
+            rawDiscount = 0;
+          }
+          if (maxDiscount != null) {
+            rawDiscount = Math.min(rawDiscount, maxDiscount);
+          }
+          const effectiveDiscount = roundMoney(Math.min(rawDiscount, effectiveTotal));
+
+          if (effectiveDiscount <= 0) {
+            failDiscountCode('Discount code is not eligible for this order');
+          } else {
+            discountCodeApplied = true;
+            appliedDiscountCode = discountCodeRequested;
+            appliedDiscountName = String(codeRow.name || discountCodeRequested);
+            discountCodeAmount = effectiveDiscount;
+            effectiveItems = [
+              ...effectiveItems,
+              {
+                id: 'discount-code',
+                name:
+                  effectiveLanguage === 'ar'
+                    ? `خصم (${discountCodeRequested})`
+                    : `Discount (${discountCodeRequested})`,
+                price: -effectiveDiscount,
+                quantity: 1,
+              },
+            ];
+            effectiveTotal = roundMoney(Math.max(0, effectiveTotal - effectiveDiscount));
+          }
+        }
+      }
+    }
+  }
+
+  const vatAmount = roundMoney(effectiveTotal * (ORDER_VAT_RATE / (1 + ORDER_VAT_RATE)));
+  const subtotalExclVat = roundMoney(effectiveTotal - vatAmount);
+
+  return {
+    itemsTotal,
+    rewardType,
+    rewardApplied: rewardDiscountAmount > 0,
+    rewardDiscountAmount,
+    discountCodeRequested: discountCodeRequested || null,
+    discountCodeApplied,
+    discountCode: appliedDiscountCode,
+    discountCodeName: appliedDiscountName,
+    discountCodeAmount,
+    discountCodeError,
+    effectiveItems,
+    total: effectiveTotal,
+    subtotalExclVat,
+    vatAmount,
+    totalWithVat: effectiveTotal,
+  };
+}
+
 function isOpenForSchedule(now, start, end, timeZone) {
   const startMin = parseTimeToMinutes(start);
   const endMin = parseTimeToMinutes(end);
@@ -390,6 +680,39 @@ function generatePrintClaimToken() {
 function getPublicBaseUrl(c) {
   if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL;
   return new URL(c.req.url).origin;
+}
+
+function getStaticContentType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.html') return 'text/html; charset=utf-8';
+  if (ext === '.css') return 'text/css; charset=utf-8';
+  if (ext === '.js') return 'application/javascript; charset=utf-8';
+  if (ext === '.json') return 'application/json; charset=utf-8';
+  if (ext === '.map') return 'application/json; charset=utf-8';
+  if (ext === '.svg') return 'image/svg+xml';
+  if (EXT_TO_IMAGE_CONTENT_TYPE[ext]) return EXT_TO_IMAGE_CONTENT_TYPE[ext];
+  if (ext === '.woff') return 'font/woff';
+  if (ext === '.woff2') return 'font/woff2';
+  return 'application/octet-stream';
+}
+
+async function serveBuiltFile(c, relativePath, fallbackToIndex = false) {
+  const normalized = relativePath.replace(/^\/+/, '');
+  const targetPath = path.join(BUILD_DIR, normalized || 'index.html');
+  try {
+    const file = await fs.readFile(targetPath);
+    return c.body(file, 200, { 'Content-Type': getStaticContentType(targetPath) });
+  } catch {
+    if (!fallbackToIndex) return null;
+  }
+
+  try {
+    const indexPath = path.join(BUILD_DIR, 'index.html');
+    const file = await fs.readFile(indexPath);
+    return c.body(file, 200, { 'Content-Type': 'text/html; charset=utf-8' });
+  } catch {
+    return null;
+  }
 }
 
 async function getSetting(key, fallback) {
@@ -576,7 +899,11 @@ app.get('/api/health', async (c) => {
   }
   return c.json(payload);
 });
-app.get('/', (c) => c.text('OK'));
+app.get('/', async (c) => {
+  const served = await serveBuiltFile(c, 'index.html', true);
+  if (served) return served;
+  return c.text('OK');
+});
 
 // Public settings (open status + hours)
 app.get('/api/settings/public', async (c) => {
@@ -1897,10 +2224,49 @@ app.delete('/api/admin/menu/item/:id', async (c) => {
 });
 
 // Orders
+app.post('/api/orders/price-preview', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { items, redeemReward, discountCode, language } = body;
+    if (!Array.isArray(items) || items.length === 0) {
+      return c.json({ error: 'Order must contain at least one item' }, 400);
+    }
+
+    const authHeader = c.req.header('Authorization') || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const sessionUser = await getSessionUser(token);
+    const effectiveLanguage = language === 'ar' ? 'ar' : 'en';
+    const { canonicalItems } = await loadCanonicalOrderItems(items, effectiveLanguage);
+    const pricing = await buildOrderPricing({
+      canonicalItems,
+      effectiveUserId: sessionUser?.id || null,
+      effectiveLanguage,
+      redeemReward: Boolean(redeemReward),
+      discountCode,
+      strictDiscountCode: false,
+    });
+
+    return c.json({
+      success: true,
+      pricing,
+    });
+  } catch (e) {
+    const status = Number(e?.status) || 500;
+    const payload = { error: e?.message || 'Failed to build order preview' };
+    if (Array.isArray(e?.missing)) payload.missing = e.missing;
+    if (Array.isArray(e?.unavailable)) payload.unavailable = e.unavailable;
+    if (status >= 500) {
+      console.error('Error building order preview', e);
+    }
+    return c.json(payload, status);
+  }
+});
+
 app.post('/api/orders/create', async (c) => {
   try {
     const body = await c.req.json();
-    const { items, paymentMethod, userId, phoneNumber, redeemReward, language } = body;
+    const { items, paymentMethod, userId, phoneNumber, redeemReward, discountCode, language } =
+      body;
     if (!items || items.length === 0) {
       return c.json({ error: 'Order must contain at least one item' }, 400);
     }
@@ -1912,115 +2278,20 @@ app.post('/api/orders/create', async (c) => {
     const effectiveUserId = sessionUser?.id || userId || null;
     const effectivePhoneNumber = sessionUser?.phoneNumber || phoneNumber || null;
     const effectiveLanguage = language === 'ar' ? 'ar' : 'en';
-
-    // Normalize items (avoid NaN / invalid data)
-    const normalizedItems = (Array.isArray(items) ? items : [])
-      .map((it) => {
-        const quantity = Math.max(1, Math.min(99, Math.floor(Number(it?.quantity) || 1)));
-        const id = String(it?.id || '').trim();
-        const temperature = ['hot', 'iced'].includes(String(it?.options?.temperature || ''))
-          ? String(it.options.temperature)
-          : null;
-        return { id, quantity, options: temperature ? { temperature } : undefined };
-      })
-      .filter((it) => it.id);
-
-    if (normalizedItems.length === 0) {
-      return c.json({ error: 'Invalid items payload' }, 400);
-    }
-
-    const ids = Array.from(new Set(normalizedItems.map((it) => it.id)));
-    const placeholders = ids.map(() => '?').join(',');
-    const [rows] = await pool.execute(
-      `SELECT id, nameEn, nameAr, price, available FROM items WHERE id IN (${placeholders})`,
-      ids
+    const { normalizedItems, ids, placeholders, canonicalItems } = await loadCanonicalOrderItems(
+      items,
+      effectiveLanguage
     );
-    const byId = new Map((Array.isArray(rows) ? rows : []).map((r) => [String(r.id), r]));
-    const missing = ids.filter((id) => !byId.has(id));
-    if (missing.length > 0) {
-      return c.json({ error: 'Some items were not found', missing }, 400);
-    }
-    const unavailable = ids.filter((id) => {
-      const row = byId.get(id);
-      return row && Number(row.available) === 0;
+    const pricing = await buildOrderPricing({
+      canonicalItems,
+      effectiveUserId,
+      effectiveLanguage,
+      redeemReward: Boolean(redeemReward),
+      discountCode,
+      strictDiscountCode: true,
     });
-    if (unavailable.length > 0) {
-      return c.json({ error: 'Some items are unavailable', unavailable }, 400);
-    }
-
-    const canonicalItems = normalizedItems.map((it) => {
-      const row = byId.get(it.id);
-      const price = Number(row?.price || 0);
-      const nameEn = String(row?.nameEn || '');
-      const nameAr = String(row?.nameAr || '');
-      const temperature = it.options?.temperature;
-      const temperatureEn = temperature === 'hot' ? 'Hot' : temperature === 'iced' ? 'Iced' : '';
-      const temperatureAr = temperature === 'hot' ? 'ساخن' : temperature === 'iced' ? 'بارد' : '';
-      const displayNameEn = `${nameEn}${temperatureEn ? ` · ${temperatureEn}` : ''}`;
-      const displayNameAr = `${nameAr}${temperatureAr ? ` · ${temperatureAr}` : ''}`;
-      const name = effectiveLanguage === 'ar' ? displayNameAr || displayNameEn : displayNameEn || displayNameAr;
-      return {
-        id: it.id,
-        name,
-        nameEn: displayNameEn,
-        nameAr: displayNameAr,
-        price: Number.isFinite(price) ? price : 0,
-        quantity: it.quantity,
-        ...(it.options ? { options: it.options } : {}),
-      };
-    });
-
-    const computeTotal = (arr) =>
-      arr.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0);
-
-    let effectiveItems = canonicalItems;
-    let effectiveTotal = computeTotal(effectiveItems);
-
-    // Fetch loyalty to apply rewards
-    if (effectiveUserId && redeemReward) {
-      const [rows] = await pool.execute(
-        'SELECT points FROM loyalty_accounts WHERE userId = ? AND enabled = 1',
-        [effectiveUserId]
-      );
-      const p = Number(rows?.[0]?.points || 0);
-      const stamps = p > 0 ? ((p - 1) % 6) + 1 : 0;
-      if (stamps === 3) {
-        // Free cup: discount the highest unit price
-        const maxUnitPrice = effectiveItems.reduce(
-          (max, it) => Math.max(max, Number(it.price) || 0),
-          0
-        );
-        const discount = Math.min(maxUnitPrice, effectiveTotal);
-        if (discount > 0) {
-          effectiveItems = [
-            ...effectiveItems,
-            {
-              id: 'reward-discount',
-              name: effectiveLanguage === 'ar' ? 'خصم المكافأة' : 'Reward discount',
-              price: -discount,
-              quantity: 1,
-            },
-          ];
-          effectiveTotal = Math.max(0, effectiveTotal - discount);
-        }
-      } else if (stamps === 6) {
-        // 50% off, capped at 20 SAR (represent as a discount line item)
-        const baseTotal = effectiveTotal;
-        const discount = Math.min(baseTotal * 0.5, 20);
-        if (discount > 0) {
-          effectiveItems = [
-            ...effectiveItems,
-            {
-              id: 'reward-discount',
-              name: effectiveLanguage === 'ar' ? 'خصم المكافأة' : 'Reward discount',
-              price: -discount,
-              quantity: 1,
-            },
-          ];
-        }
-        effectiveTotal = Math.max(0, baseTotal - discount);
-      }
-    }
+    const effectiveItems = pricing.effectiveItems;
+    const effectiveTotal = pricing.total;
 
     const dateKey = await getCurrentDateKey();
     const paymentMethodValue = paymentMethod || 'cash';
@@ -2169,7 +2440,7 @@ app.post('/api/orders/create', async (c) => {
       createdAt = Date.now();
 
       await conn.execute(
-        'INSERT INTO orders (id, orderNumber, displayNumber, dateKey, userId, phoneNumber, items, total, paymentMethod, status, completedAt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO orders (id, orderNumber, displayNumber, dateKey, userId, phoneNumber, items, total, paymentMethod, status, completedAt, createdAt, discountCode, discountAmount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
           orderId,
           orderNumber,
@@ -2183,6 +2454,8 @@ app.post('/api/orders/create', async (c) => {
           'received',
           null,
           createdAt,
+          pricing.discountCode,
+          pricing.discountCodeAmount > 0 ? pricing.discountCodeAmount : null,
         ]
       );
 
@@ -2264,9 +2537,6 @@ app.post('/api/orders/create', async (c) => {
       );
     }
 
-    const VAT_RATE = 0.15;
-    const vatAmount = effectiveTotal * (VAT_RATE / (1 + VAT_RATE));
-    const subtotalExclVat = effectiveTotal - vatAmount;
     const orderSummary = {
       id: orderId,
       orderNumber,
@@ -2277,9 +2547,15 @@ app.post('/api/orders/create', async (c) => {
       phoneNumber: effectivePhoneNumber,
       items: effectiveItems,
       total: effectiveTotal,
-      subtotalExclVat,
-      vatAmount,
-      totalWithVat: effectiveTotal,
+      subtotalExclVat: pricing.subtotalExclVat,
+      vatAmount: pricing.vatAmount,
+      totalWithVat: pricing.totalWithVat,
+      itemsTotal: pricing.itemsTotal,
+      rewardType: pricing.rewardType,
+      rewardDiscountAmount: pricing.rewardDiscountAmount,
+      discountCode: pricing.discountCode,
+      discountCodeName: pricing.discountCodeName,
+      discountCodeAmount: pricing.discountCodeAmount,
       paymentMethod: paymentMethod || 'cash',
       status: 'received',
     };
@@ -2304,6 +2580,13 @@ app.post('/api/orders/create', async (c) => {
 
     return c.json(responsePayload);
   } catch (e) {
+    if (Number(e?.status) >= 400 && Number(e?.status) < 500) {
+      const status = Number(e.status);
+      const payload = { error: e?.message || 'Failed to create order' };
+      if (Array.isArray(e?.missing)) payload.missing = e.missing;
+      if (Array.isArray(e?.unavailable)) payload.unavailable = e.unavailable;
+      return c.json(payload, status);
+    }
     console.error('Error creating order', e);
     return c.json({ error: 'Failed to create order' }, 500);
   }
@@ -2592,10 +2875,8 @@ app.get('/api/admin/customers', async (c) => {
 function mapOrderRow(row) {
   const items = Array.isArray(row.items) ? row.items : JSON.parse(row.items || '[]');
   const total = Number(row.total);
-  // Prices are VAT-inclusive; compute VAT portion without adding on top
-  const VAT_RATE = 0.15;
-  const vatAmount = total * (VAT_RATE / (1 + VAT_RATE));
-  const subtotalExclVat = total - vatAmount;
+  const vatAmount = roundMoney(total * (ORDER_VAT_RATE / (1 + ORDER_VAT_RATE)));
+  const subtotalExclVat = roundMoney(total - vatAmount);
   const totalWithVat = total;
   return {
     id: row.id,
@@ -2607,6 +2888,8 @@ function mapOrderRow(row) {
     subtotalExclVat,
     vatAmount,
     totalWithVat,
+    discountCode: row.discountCode || null,
+    discountAmount: row.discountAmount != null ? Number(row.discountAmount) : 0,
     status: row.completedAt ? 'completed' : 'received',
     paymentMethod: row.paymentMethod,
     orderNumber: row.orderNumber,
@@ -2915,6 +3198,18 @@ app.delete('/api/admin/menu/item/:id/image', async (c) => {
     console.error('Error removing item image', e);
     return c.json({ error: 'Failed to remove image' }, 500);
   }
+});
+
+app.get('*', async (c) => {
+  const requestPath = c.req.path || '/';
+  if (requestPath.startsWith('/api/') || requestPath.startsWith('/uploads/')) {
+    return c.notFound();
+  }
+
+  const relativePath = requestPath === '/' ? 'index.html' : requestPath.replace(/^\/+/, '');
+  const served = await serveBuiltFile(c, relativePath, true);
+  if (served) return served;
+  return c.notFound();
 });
 
 const PORT = Number(process.env.PORT || 4000);

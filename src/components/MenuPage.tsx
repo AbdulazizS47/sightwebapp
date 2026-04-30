@@ -77,6 +77,7 @@ export function MenuPage({
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [activeCategory, setActiveCategory] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [menuLoadError, setMenuLoadError] = useState('');
   const cart = cartItems;
   const setCart = onUpdateCart;
 
@@ -147,6 +148,9 @@ export function MenuPage({
       temperature: 'Temperature',
       checkout: 'Checkout',
       emptyCart: 'Cart is empty',
+      menuUnavailable: 'Unable to load the menu right now',
+      menuEmpty: 'No menu items available',
+      retry: 'Retry',
     },
     ar: {
       menu: 'القائمة',
@@ -158,6 +162,9 @@ export function MenuPage({
       temperature: 'درجة المشروب',
       checkout: 'تنفيذ الطلب',
       emptyCart: 'السلة فارغة',
+      menuUnavailable: 'تعذر تحميل القائمة الآن',
+      menuEmpty: 'لا توجد عناصر في القائمة',
+      retry: 'إعادة المحاولة',
     },
   };
 
@@ -233,58 +240,115 @@ export function MenuPage({
     return () => window.clearTimeout(timeoutId);
   }, [menuItems]);
 
+  const getMenuRequestUrls = () => {
+    const urls = new Set<string>();
+    const addUrl = (value: string | null | undefined) => {
+      const normalized = String(value || '').trim().replace(/\/+$/, '');
+      if (!normalized) return;
+      urls.add(`${normalized}/menu/items`);
+    };
+
+    addUrl(apiBaseUrl);
+
+    if (typeof window !== 'undefined') {
+      addUrl(`${window.location.origin}/api`);
+
+      const { hostname } = window.location;
+      if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        addUrl('http://127.0.0.1:4000/api');
+        addUrl('http://localhost:4000/api');
+        addUrl('http://127.0.0.1:3000/api');
+        addUrl('http://localhost:3000/api');
+      }
+    }
+
+    return Array.from(urls);
+  };
+
   const loadMenu = async () => {
     setLoading(true);
+    setMenuLoadError('');
     try {
-      const response = await fetch(`${apiBaseUrl}/menu/items`, {
-        headers: { Accept: 'application/json' },
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      // Read body ONCE as text, then attempt JSON parsing with sanitization fallback
-      const raw = await response.text();
-      console.log('Menu raw response:', raw);
+      const requestUrls = getMenuRequestUrls();
       let data: any = null;
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        const sanitized = raw
-          .replace(/^\uFEFF/, '') // strip BOM if present
-          .replace(/^\)\]\}',?\s*/, '') // strip common anti-CSRF prefix
-          .trim();
-        const objStart = sanitized.indexOf('{');
-        const objEnd = sanitized.lastIndexOf('}');
-        const arrStart = sanitized.indexOf('[');
-        const arrEnd = sanitized.lastIndexOf(']');
-        if (objStart !== -1 && objEnd !== -1 && objEnd > objStart) {
-          data = JSON.parse(sanitized.slice(objStart, objEnd + 1));
-        } else if (arrStart !== -1 && arrEnd !== -1 && arrEnd > arrStart) {
-          data = JSON.parse(sanitized.slice(arrStart, arrEnd + 1));
-        } else {
-          throw new Error('Invalid response format for menu endpoint');
+      let lastError: Error | null = null;
+      let successfulRequestUrl = '';
+
+      for (const requestUrl of requestUrls) {
+        try {
+          const response = await fetch(requestUrl, {
+            method: 'GET',
+            headers: {
+              Accept: 'application/json',
+            },
+            cache: 'no-store',
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          const rawText = await response.text();
+          try {
+            data = JSON.parse(rawText || '{}');
+          } catch {
+            throw new Error('Invalid response format for menu endpoint');
+          }
+
+          if (!data?.success) {
+            throw new Error('Menu payload missing expected fields');
+          }
+
+          successfulRequestUrl = requestUrl;
+          break;
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error('Failed to fetch');
+          data = null;
         }
       }
 
-      if (data && data.success) {
-        setCategories(data.categories.sort((a: Category, b: Category) => a.order - b.order));
-        setMenuItems(
-          data.items.map((it: any) => ({
-            ...it,
-            descriptionEn: it.descriptionEn ?? it.description ?? '',
-            descriptionAr: it.descriptionAr ?? it.description ?? '',
-            price: typeof it.price === 'number' ? it.price : parseFloat(it.price) || 0,
-          }))
-        );
-        if (data.categories.length > 0) {
-          setActiveCategory(data.categories[0].id);
-        }
-      } else {
-        throw new Error('Menu payload missing expected fields');
+      if (!data) {
+        throw lastError || new Error('Failed to fetch');
       }
+
+      console.info('Loaded menu from:', successfulRequestUrl);
+
+      const nextCategories = Array.isArray(data.categories)
+        ? [...data.categories]
+            .map((category: any) => ({
+              id: String(category?.id || ''),
+              nameEn: String(category?.nameEn || ''),
+              nameAr: String(category?.nameAr || ''),
+              order: Number(category?.order || 0),
+              iconUrl: category?.iconUrl || undefined,
+            }))
+            .filter((category: Category) => category.id)
+            .sort((a: Category, b: Category) => a.order - b.order)
+        : [];
+
+      const nextMenuItems = Array.isArray(data.items)
+        ? data.items
+            .map((it: any) => ({
+              ...it,
+              id: String(it?.id || ''),
+              category: String(it?.category || ''),
+              descriptionEn: it?.descriptionEn ?? it?.description ?? '',
+              descriptionAr: it?.descriptionAr ?? it?.description ?? '',
+              price: typeof it?.price === 'number' ? it.price : parseFloat(it?.price) || 0,
+              available: Boolean(Number(it?.available ?? 0)),
+            }))
+            .filter((item: MenuItem) => item.id && item.category)
+        : [];
+
+      setCategories(nextCategories);
+      setMenuItems(nextMenuItems);
+      setActiveCategory((prev) => {
+        if (prev && nextCategories.some((category) => category.id === prev)) return prev;
+        return nextCategories[0]?.id || '';
+      });
     } catch (error) {
       console.error('Error loading menu:', error);
+      setMenuLoadError(error instanceof Error ? error.message : 'Failed to load menu');
     } finally {
       setLoading(false);
     }
@@ -1002,6 +1066,27 @@ export function MenuPage({
 
       {/* Menu Items by Category */}
       <div className="p-3">
+        {menuLoadError && (
+          <div className="p-4 border-2 border-red-600 bg-red-50 text-red-600 mb-4">
+            <div className="mb-2">{text.menuUnavailable}</div>
+            <div className="text-xs opacity-70 mb-3">{menuLoadError}</div>
+            <button
+              onClick={() => {
+                void loadMenu();
+              }}
+              className="px-4 py-2 border border-red-600 hover:bg-red-600 hover:text-[var(--crisp-white)] transition-colors text-sm"
+            >
+              {text.retry}
+            </button>
+          </div>
+        )}
+
+        {!menuLoadError && categories.length === 0 && (
+          <div className="text-center py-8 text-[var(--matte-black)] opacity-60">
+            {text.menuEmpty}
+          </div>
+        )}
+
         {categories.map((category) => {
           const categoryItems = getItemsForCategory(category.id);
           // Always render category block; show empty state if no items

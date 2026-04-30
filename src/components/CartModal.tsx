@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { X, Plus, Minus, Banknote } from 'lucide-react';
-import { apiBaseUrl } from '../utils/api';
+import { getApiRequestUrls } from '../utils/api';
 
 type DrinkTemperature = 'hot' | 'iced';
 
@@ -14,6 +14,23 @@ interface CartItem {
   temperature?: DrinkTemperature;
 }
 
+interface PricingSummary {
+  itemsTotal: number;
+  subtotalExclVat: number;
+  vatAmount: number;
+  total: number;
+  totalWithVat: number;
+  rewardType: 'free' | 'half' | null;
+  rewardApplied: boolean;
+  rewardDiscountAmount: number;
+  discountCodeRequested: string | null;
+  discountCodeApplied: boolean;
+  discountCode: string | null;
+  discountCodeName: string | null;
+  discountCodeAmount: number;
+  discountCodeError: string | null;
+}
+
 interface CartModalProps {
   onClose: () => void;
   items: CartItem[];
@@ -22,6 +39,17 @@ interface CartModalProps {
   onAuthRequired: () => void;
   sessionToken: string | null;
   language: 'en' | 'ar';
+  discountCodeInput: string;
+  onDiscountCodeInputChange: (...args: [string]) => void;
+  appliedDiscountCode: string | null;
+  onAppliedDiscountCodeChange: (...args: [string | null]) => void;
+}
+
+function normalizeDiscountCodeValue(value: string) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '');
 }
 
 export function CartModal({
@@ -32,8 +60,13 @@ export function CartModal({
   onAuthRequired,
   sessionToken,
   language,
+  discountCodeInput,
+  onDiscountCodeInputChange,
+  appliedDiscountCode,
+  onAppliedDiscountCodeChange,
 }: CartModalProps) {
   const [loading, setLoading] = useState(false);
+  const [pricingLoading, setPricingLoading] = useState(false);
   const [error, setError] = useState('');
   const [loyalty, setLoyalty] = useState<{ enabled: boolean; stamps: number } | null>(null);
   const [redeemReward, setRedeemReward] = useState(false);
@@ -51,14 +84,19 @@ export function CartModal({
       payment: 'Payment Method',
       payOnPickup: 'Pay on pickup',
       process: 'Process Order',
-      signInRequired: 'Please sign in to place an order',
-      signInPrompt: 'Sign in with your phone number to complete your order',
-      signInButton: 'Sign In to Order',
+      processLoading: 'Processing...',
       redeemReward: 'Redeem reward',
       freeCup: 'Free cup',
       halfOff: '50% off',
       discountCap: 'max 20 SAR',
       rewardApplied: 'Reward applied',
+      discountCode: 'Discount code',
+      discountCodePlaceholder: 'Enter code',
+      applyCode: 'Apply',
+      removeCode: 'Remove',
+      codeApplied: 'Code applied',
+      codeDiscount: 'Discount code',
+      validatingCode: 'Updating total...',
       confirmTitle: 'Confirm Order',
       confirmMessage: 'Your order will be ready within 10 minutes. Pay on pickup.',
       confirmButton: 'Confirm Order',
@@ -76,14 +114,19 @@ export function CartModal({
       payment: 'طريقة الدفع',
       payOnPickup: 'الدفع عند الوصول',
       process: 'إتمام الطلب',
-      signInRequired: 'الرجاء تسجيل الدخول لإتمام الطلب',
-      signInPrompt: 'سجل الدخول برقم هاتفك لإكمال طلبك',
-      signInButton: 'تسجيل الدخول للطلب',
-      redeemReward: 'Redeem reward',
-      freeCup: 'Free cup',
-      halfOff: '50% off',
-      discountCap: 'max 20 SAR',
-      rewardApplied: 'Reward applied',
+      processLoading: 'جارٍ المعالجة...',
+      redeemReward: 'استبدال المكافأة',
+      freeCup: 'كوب مجاني',
+      halfOff: 'خصم 50%',
+      discountCap: 'حد أقصى 20 ريال',
+      rewardApplied: 'تم تطبيق المكافأة',
+      discountCode: 'كود الخصم',
+      discountCodePlaceholder: 'أدخل الكود',
+      applyCode: 'تطبيق',
+      removeCode: 'إزالة',
+      codeApplied: 'تم تطبيق الكود',
+      codeDiscount: 'خصم الكود',
+      validatingCode: 'جارٍ تحديث الإجمالي...',
       confirmTitle: 'تأكيد الطلب',
       confirmMessage: 'سيكون طلبك جاهزًا خلال 10 دقائق. الدفع عند الاستلام.',
       confirmButton: 'تأكيد الطلب',
@@ -95,14 +138,33 @@ export function CartModal({
 
   const text = content[language];
   const isRTL = language === 'ar';
-  const VAT_RATE = 0.15;
-  const maxDiscount = 20; // SAR limit for 50% off (discount amount)
+  const vatRate = 0.15;
+  const maxRewardDiscount = 20;
 
   const getCartKey = (item: CartItem) => item.cartKey || item.id;
+  const previewEndpointUrls = getApiRequestUrls('/orders/price-preview');
+  const createOrderEndpointUrls = getApiRequestUrls('/orders/create');
+  const loyaltyEndpointUrls = getApiRequestUrls('/profile/loyalty');
 
   const getTemperatureLabel = (temperature?: DrinkTemperature) => {
     if (!temperature) return '';
     return temperature === 'hot' ? text.hot : text.iced;
+  };
+
+  const fetchJsonWithFallback = async (urls: string[], init?: RequestInit) => {
+    let lastError: Error | null = null;
+
+    for (const url of urls) {
+      try {
+        const response = await fetch(url, init);
+        const data = await response.json().catch(() => ({}));
+        return { response, data, url };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Request failed');
+      }
+    }
+
+    throw lastError || new Error('Request failed');
   };
 
   const updateQuantity = (cartKey: string, change: number) => {
@@ -117,9 +179,7 @@ export function CartModal({
     onUpdateCart(updatedItems);
   };
 
-  // Prices are VAT-inclusive. We display the VAT portion without adding it on top.
   const itemsTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-
   const rewardType =
     loyalty?.enabled && loyalty.stamps === 3
       ? 'free'
@@ -128,33 +188,112 @@ export function CartModal({
         : null;
   const rewardActive = Boolean(redeemReward && rewardType);
   const maxUnitPrice = items.reduce((max, item) => Math.max(max, item.price || 0), 0);
-
-  const discountAmount = rewardActive
+  const rewardDiscountAmount = rewardActive
     ? rewardType === 'free'
       ? Math.min(maxUnitPrice, itemsTotal)
-      : Math.min(itemsTotal * 0.5, maxDiscount)
+      : Math.min(itemsTotal * 0.5, maxRewardDiscount)
     : 0;
+  const fallbackTotal = Math.max(0, itemsTotal - rewardDiscountAmount);
+  const fallbackVatAmount = fallbackTotal * (vatRate / (1 + vatRate));
+  const fallbackSubtotal = fallbackTotal - fallbackVatAmount;
 
-  const finalTotal = Math.max(0, itemsTotal - discountAmount);
-  const vatAmount = finalTotal * (VAT_RATE / (1 + VAT_RATE));
-  const subtotalExclVat = finalTotal - vatAmount;
+  const buildFallbackPricing = (): PricingSummary => ({
+    itemsTotal,
+    subtotalExclVat: fallbackSubtotal,
+    vatAmount: fallbackVatAmount,
+    total: fallbackTotal,
+    totalWithVat: fallbackTotal,
+    rewardType,
+    rewardApplied: rewardDiscountAmount > 0,
+    rewardDiscountAmount,
+    discountCodeRequested: appliedDiscountCode,
+    discountCodeApplied: false,
+    discountCode: null,
+    discountCodeName: null,
+    discountCodeAmount: 0,
+    discountCodeError: null,
+  });
 
-  // Fetch loyalty on mount
+  const [pricing, setPricing] = useState<PricingSummary>(() => buildFallbackPricing());
+
   useEffect(() => {
-    if (!sessionToken) return;
-    fetch(`${apiBaseUrl}/profile/loyalty`, {
+    setPricing(buildFallbackPricing());
+  }, [itemsTotal, fallbackSubtotal, fallbackVatAmount, fallbackTotal, rewardType, rewardDiscountAmount]);
+
+  useEffect(() => {
+    if (!sessionToken) {
+      setLoyalty(null);
+      setRedeemReward(false);
+      return;
+    }
+
+    fetchJsonWithFallback(loyaltyEndpointUrls, {
       headers: { Authorization: `Bearer ${sessionToken}` },
     })
-      .then((r) => r.json())
-      .then((j) => {
+      .then(({ data: j }) => {
         if (j.success && j.loyalty) {
-          const p = Number(j.loyalty.points || 0);
-          const stamps = p > 0 ? ((p - 1) % 6) + 1 : 0;
+          const points = Number(j.loyalty.points || 0);
+          const stamps = points > 0 ? ((points - 1) % 6) + 1 : 0;
           setLoyalty({ enabled: Boolean(Number(j.loyalty.enabled)), stamps });
         }
       })
       .catch(() => {});
   }, [sessionToken]);
+
+  useEffect(() => {
+    if (items.length === 0) return;
+
+    let ignore = false;
+
+    const loadPreview = async () => {
+      setPricingLoading(true);
+      try {
+        const { response, data } = await fetchJsonWithFallback(previewEndpointUrls, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+          },
+          body: JSON.stringify({
+            items: items.map((item) => ({
+              id: item.id,
+              quantity: item.quantity,
+              options: item.temperature ? { temperature: item.temperature } : undefined,
+            })),
+            redeemReward,
+            discountCode: appliedDiscountCode,
+            language,
+          }),
+        });
+
+        if (!response.ok || !data?.success) {
+          throw new Error(data?.error || 'Failed to preview order');
+        }
+
+        if (ignore) return;
+        setPricing(data.pricing);
+      } catch (previewError) {
+        if (!ignore) {
+          setPricing({
+            ...buildFallbackPricing(),
+            discountCodeRequested: appliedDiscountCode,
+            discountCodeError:
+              previewError instanceof Error ? previewError.message : 'Failed to update pricing',
+          });
+        }
+      } finally {
+        if (!ignore) {
+          setPricingLoading(false);
+        }
+      }
+    };
+
+    void loadPreview();
+
+    return () => {
+      ignore = true;
+    };
+  }, [items, redeemReward, appliedDiscountCode, sessionToken, language]);
 
   const processOrder = async () => {
     if (!sessionToken) {
@@ -171,7 +310,7 @@ export function CartModal({
     setError('');
 
     try {
-      const response = await fetch(`${apiBaseUrl}/orders/create`, {
+      const { response, data } = await fetchJsonWithFallback(createOrderEndpointUrls, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -186,10 +325,9 @@ export function CartModal({
           paymentMethod,
           language,
           redeemReward,
+          discountCode: appliedDiscountCode,
         }),
       });
-
-      const data = await response.json();
 
       if (!response.ok) {
         throw new Error(data.error || 'Failed to create order');
@@ -211,20 +349,25 @@ export function CartModal({
               name: `${language === 'en' ? item.nameEn : item.nameAr}${
                 item.temperature ? ` · ${getTemperatureLabel(item.temperature)}` : ''
               }`,
-              nameEn: `${item.nameEn}${item.temperature ? ` · ${item.temperature === 'hot' ? 'Hot' : 'Iced'}` : ''}`,
-              nameAr: `${item.nameAr}${item.temperature ? ` · ${item.temperature === 'hot' ? 'ساخن' : 'بارد'}` : ''}`,
+              nameEn: `${item.nameEn}${
+                item.temperature ? ` · ${item.temperature === 'hot' ? 'Hot' : 'Iced'}` : ''
+              }`,
+              nameAr: `${item.nameAr}${
+                item.temperature ? ` · ${item.temperature === 'hot' ? 'ساخن' : 'بارد'}` : ''
+              }`,
               price: item.price,
               options: item.temperature ? { temperature: item.temperature } : undefined,
             })),
-            total: finalTotal,
-            subtotalExclVat,
-            vatAmount,
-            totalWithVat: finalTotal,
+            total: pricing.total,
+            subtotalExclVat: pricing.subtotalExclVat,
+            vatAmount: pricing.vatAmount,
+            totalWithVat: pricing.totalWithVat,
             paymentMethod,
             status: 'received',
+            discountCode: pricing.discountCode,
+            discountCodeAmount: pricing.discountCodeAmount,
           };
 
-      // Clear cart and show success
       onUpdateCart([]);
       onOrderComplete(order?.id || data.orderId, orderData);
       onClose();
@@ -234,6 +377,19 @@ export function CartModal({
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleApplyDiscountCode = () => {
+    setError('');
+    const normalized = normalizeDiscountCodeValue(discountCodeInput);
+    onDiscountCodeInputChange(normalized);
+    onAppliedDiscountCodeChange(normalized || null);
+  };
+
+  const handleRemoveDiscountCode = () => {
+    setError('');
+    onDiscountCodeInputChange('');
+    onAppliedDiscountCodeChange(null);
   };
 
   const handleProcessOrder = () => {
@@ -282,7 +438,7 @@ export function CartModal({
           </div>
         </div>
       )}
-      {/* Header */}
+
       <div className="sticky top-0 bg-[var(--crisp-white)] border-b border-[var(--matte-black)] z-10">
         <div className="flex items-center justify-between p-4">
           <h2 className="text-lg text-[var(--matte-black)]">{text.cart}</h2>
@@ -295,13 +451,11 @@ export function CartModal({
         </div>
       </div>
 
-      {/* Content */}
       <div className="p-4">
         {items.length === 0 ? (
           <div className="text-center py-16 text-[var(--matte-black)] opacity-50">{text.empty}</div>
         ) : (
           <>
-            {/* Cart Items */}
             <div className="space-y-3 mb-6">
               {items.map((item) => {
                 const cartKey = getCartKey(item);
@@ -346,19 +500,17 @@ export function CartModal({
                 );
               })}
             </div>
-            {/* Loyalty reward toggle */}
+
             {loyalty?.enabled && loyalty.stamps === 3 && (
               <div className="mb-4">
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
                     checked={redeemReward}
-                    onChange={(e) => {
-                      setRedeemReward(e.target.checked);
-                    }}
+                    onChange={(e) => setRedeemReward(e.target.checked)}
                   />
                   <span>
-                    {text.redeemReward} – {text.freeCup}
+                    {text.redeemReward} - {text.freeCup}
                   </span>
                 </label>
               </div>
@@ -369,47 +521,98 @@ export function CartModal({
                   <input
                     type="checkbox"
                     checked={redeemReward}
-                    onChange={(e) => {
-                      setRedeemReward(e.target.checked);
-                    }}
+                    onChange={(e) => setRedeemReward(e.target.checked)}
                   />
                   <span>
-                    {text.redeemReward} – {text.halfOff} ({text.discountCap})
+                    {text.redeemReward} - {text.halfOff} ({text.discountCap})
                   </span>
                 </label>
               </div>
             )}
-            {/* Subtotal, VAT, Total */}
+
+            <div className="border border-[var(--matte-black)] p-4 mb-4">
+              <div className="text-sm text-[var(--matte-black)] mb-2">{text.discountCode}</div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={discountCodeInput}
+                  onChange={(e) => onDiscountCodeInputChange(e.target.value.toUpperCase())}
+                  placeholder={text.discountCodePlaceholder}
+                  className="flex-1 px-3 py-2 border border-[var(--matte-black)] bg-[var(--crisp-white)] text-[var(--matte-black)]"
+                />
+                {appliedDiscountCode ? (
+                  <button
+                    onClick={handleRemoveDiscountCode}
+                    disabled={pricingLoading || loading}
+                    className="px-4 py-2 border-2 border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--cool-gray)] transition-colors disabled:opacity-60"
+                  >
+                    {text.removeCode}
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleApplyDiscountCode}
+                    disabled={!normalizeDiscountCodeValue(discountCodeInput) || pricingLoading || loading}
+                    className="px-4 py-2 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors disabled:opacity-60"
+                  >
+                    {text.applyCode}
+                  </button>
+                )}
+              </div>
+              {pricing.discountCodeApplied && pricing.discountCode && (
+                <div className="mt-2 text-sm text-green-700">
+                  {text.codeApplied}: {pricing.discountCode}
+                </div>
+              )}
+              {pricing.discountCodeError && (
+                <div className="mt-2 text-sm text-red-600">{pricing.discountCodeError}</div>
+              )}
+              {pricingLoading && (
+                <div className="mt-2 text-xs text-[var(--matte-black)] opacity-60">
+                  {text.validatingCode}
+                </div>
+              )}
+            </div>
+
             <div className="bg-[var(--cool-gray)] p-4 mb-6">
               <div className="flex justify-between text-[var(--matte-black)]">
                 <span>{text.subtotal}</span>
                 <span>
-                  {subtotalExclVat.toFixed(2)} {text.sar}
+                  {pricing.subtotalExclVat.toFixed(2)} {text.sar}
                 </span>
               </div>
               <div className="flex justify-between text-[var(--matte-black)] opacity-70">
                 <span>{text.vat}</span>
                 <span>
-                  {vatAmount.toFixed(2)} {text.sar}
+                  {pricing.vatAmount.toFixed(2)} {text.sar}
                 </span>
               </div>
-              {rewardActive && (
+              {pricing.rewardApplied && (
                 <div className="flex justify-between text-green-700 text-sm mt-1">
                   <span>{text.rewardApplied}</span>
                   <span>
-                    -{discountAmount.toFixed(2)} {text.sar}
+                    -{pricing.rewardDiscountAmount.toFixed(2)} {text.sar}
+                  </span>
+                </div>
+              )}
+              {pricing.discountCodeApplied && pricing.discountCodeAmount > 0 && (
+                <div className="flex justify-between text-green-700 text-sm mt-1">
+                  <span>
+                    {text.codeDiscount}
+                    {pricing.discountCode ? ` (${pricing.discountCode})` : ''}
+                  </span>
+                  <span>
+                    -{pricing.discountCodeAmount.toFixed(2)} {text.sar}
                   </span>
                 </div>
               )}
               <div className="flex justify-between text-[var(--matte-black)] font-bold mt-2">
                 <span>{text.total}</span>
                 <span>
-                  {finalTotal.toFixed(2)} {text.sar}
+                  {pricing.totalWithVat.toFixed(2)} {text.sar}
                 </span>
               </div>
             </div>
 
-            {/* Payment Method */}
             <div className="mb-6">
               <div className="text-[var(--matte-black)] mb-2">{text.payment}</div>
               <div className="flex items-center gap-2 p-3 border bg-[var(--cool-gray)] text-[var(--matte-black)]">
@@ -418,16 +621,16 @@ export function CartModal({
               </div>
             </div>
 
-            {/* Error Message */}
             {error && <div className="text-red-600 mb-4">{error}</div>}
 
-            {/* Process Order Button */}
             <button
               onClick={handleProcessOrder}
               disabled={loading}
-              className={`w-full py-3 ${loading ? 'bg-[var(--cool-gray)]' : 'bg-[var(--espresso-brown)]'} text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors`}
+              className={`w-full py-3 ${
+                loading ? 'bg-[var(--cool-gray)]' : 'bg-[var(--espresso-brown)]'
+              } text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors`}
             >
-              {loading ? 'Processing...' : text.process}
+              {loading ? text.processLoading : text.process}
             </button>
           </>
         )}
