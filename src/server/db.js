@@ -136,6 +136,9 @@ export async function initSchema() {
       phoneNumber VARCHAR(32) NULL,
       items JSON NOT NULL,
       total DECIMAL(10,2) NOT NULL,
+      discountCode VARCHAR(64) NULL,
+      discountCodeGroup VARCHAR(64) NULL,
+      discountAmount DECIMAL(10,2) NULL,
       paymentMethod VARCHAR(32) NOT NULL,
       status VARCHAR(32) NOT NULL,
       completedAt BIGINT NULL,
@@ -153,6 +156,7 @@ export async function initSchema() {
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS discount_codes (
       code VARCHAR(64) PRIMARY KEY,
+      usageGroup VARCHAR(64) NULL,
       name VARCHAR(255) NOT NULL,
       type VARCHAR(16) NOT NULL,
       value DECIMAL(10,2) NOT NULL,
@@ -318,13 +322,17 @@ export async function initSchema() {
   await ensureIndex('CREATE INDEX idx_orders_userId ON orders(userId)');
   await ensureIndex('CREATE INDEX idx_orders_phoneNumber ON orders(phoneNumber)');
   await ensureColumn('ALTER TABLE orders ADD COLUMN discountCode VARCHAR(64) NULL');
+  await ensureColumn('ALTER TABLE orders ADD COLUMN discountCodeGroup VARCHAR(64) NULL');
   await ensureColumn('ALTER TABLE orders ADD COLUMN discountAmount DECIMAL(10,2) NULL');
   await ensureIndex('CREATE INDEX idx_orders_discountCode ON orders(discountCode)');
+  await ensureIndex('CREATE INDEX idx_orders_discountCodeGroup ON orders(discountCodeGroup)');
   await ensureColumn('ALTER TABLE print_jobs ADD COLUMN claimToken VARCHAR(64) NULL');
+  await ensureColumn('ALTER TABLE discount_codes ADD COLUMN usageGroup VARCHAR(64) NULL');
   await ensureIndex('CREATE INDEX idx_print_jobs_status_created ON print_jobs(status, createdAt)');
   await ensureIndex('CREATE INDEX idx_print_jobs_orderId ON print_jobs(orderId)');
   await ensureIndex('CREATE INDEX idx_print_jobs_claimToken ON print_jobs(claimToken)');
   await ensureIndex('CREATE INDEX idx_discount_codes_active ON discount_codes(active, code)');
+  await ensureIndex('CREATE INDEX idx_discount_codes_usageGroup ON discount_codes(usageGroup)');
   await ensureIndex('CREATE INDEX idx_inventory_items_type_active ON inventory_items(type, active)');
   await ensureIndex('CREATE INDEX idx_inventory_items_nameEn ON inventory_items(nameEn)');
   await ensureIndex('CREATE INDEX idx_inventory_usage_menu ON inventory_usage_rules(menuItemId)');
@@ -341,13 +349,14 @@ export async function initSchema() {
     const now = Date.now();
     await pool.execute(
       `INSERT IGNORE INTO discount_codes
-       (code, name, type, value, minSubtotal, maxDiscount, startsAt, endsAt, usageLimitTotal, usageLimitPerUser, combinableWithLoyalty, active, createdAt, updatedAt)
+       (code, usageGroup, name, type, value, minSubtotal, maxDiscount, startsAt, endsAt, usageLimitTotal, usageLimitPerUser, combinableWithLoyalty, active, createdAt, updatedAt)
        VALUES
-       (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?),
-       (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?),
-       (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?),
-       (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)`,
+       (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?),
+       (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?),
+       (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?),
+       (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)`,
       [
+        'WELCOME10',
         'WELCOME10',
         'Welcome 10% Off',
         'percent',
@@ -359,6 +368,7 @@ export async function initSchema() {
         now,
         now,
         'SIGHT15',
+        'SIGHT15',
         'Sight 15 SAR Off',
         'fixed',
         15,
@@ -369,6 +379,7 @@ export async function initSchema() {
         now,
         now,
         'MISSU',
+        'MISSYOU_9SAR',
         'Miss You 9 SAR Off',
         'fixed',
         9,
@@ -380,6 +391,7 @@ export async function initSchema() {
         now,
         now,
         'اشتقت',
+        'MISSYOU_9SAR',
         'اشتقت - خصم 9 ريال',
         'fixed',
         9,
@@ -391,6 +403,18 @@ export async function initSchema() {
         now,
         now,
       ]
+    );
+    await pool.execute(
+      `UPDATE discount_codes
+       SET usageGroup = CASE
+         WHEN code IN ('MISSU', 'اشتقت') THEN 'MISSYOU_9SAR'
+         WHEN code = 'WELCOME10' THEN 'WELCOME10'
+         WHEN code = 'SIGHT15' THEN 'SIGHT15'
+         ELSE usageGroup
+       END,
+       updatedAt = ?
+       WHERE code IN ('WELCOME10', 'SIGHT15', 'MISSU', 'اشتقت')`,
+      [now]
     );
   }
 }

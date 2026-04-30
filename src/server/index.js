@@ -438,22 +438,65 @@ async function getDiscountCodeRecord(code, db = pool) {
   return Array.isArray(rows) && rows[0] ? rows[0] : null;
 }
 
-async function getDiscountCodeUsage(code, userId, db = pool) {
-  const normalizedCode = normalizeDiscountCode(code);
-  if (!normalizedCode) return { totalUses: 0, userUses: 0 };
+function resolveDiscountCodeUsageGroup(codeRow, fallbackCode) {
+  const requestedCode = normalizeDiscountCode(fallbackCode);
+  const configuredGroup = normalizeDiscountCode(codeRow?.usageGroup || '');
+  return configuredGroup || requestedCode || null;
+}
+
+async function getDiscountCodeUsageScope(codeRow, fallbackCode, db = pool) {
+  const usageGroup = resolveDiscountCodeUsageGroup(codeRow, fallbackCode);
+  if (!usageGroup) {
+    return { usageGroup: null, aliasCodes: [] };
+  }
+
+  if (!normalizeDiscountCode(codeRow?.usageGroup || '')) {
+    return { usageGroup, aliasCodes: [usageGroup] };
+  }
+
+  const [rows] = await db.execute('SELECT code FROM discount_codes WHERE usageGroup = ?', [usageGroup]);
+  const aliasCodes = Array.isArray(rows)
+    ? rows
+        .map((row) => normalizeDiscountCode(row?.code || ''))
+        .filter(Boolean)
+    : [];
+
+  return {
+    usageGroup,
+    aliasCodes: aliasCodes.length ? Array.from(new Set(aliasCodes)) : [usageGroup],
+  };
+}
+
+async function getDiscountCodeUsage(codeRow, fallbackCode, userId, db = pool) {
+  const { usageGroup, aliasCodes } = await getDiscountCodeUsageScope(codeRow, fallbackCode, db);
+  if (!usageGroup) return { usageGroup: null, totalUses: 0, userUses: 0 };
+
+  const placeholders = aliasCodes.map(() => '?').join(',');
+  const totalParams = [usageGroup, ...aliasCodes];
   const [totalRows] = await db.execute(
-    'SELECT COUNT(*) AS totalUses FROM orders WHERE discountCode = ?',
-    [normalizedCode]
+    `SELECT COUNT(*) AS totalUses
+     FROM orders
+     WHERE discountCodeGroup = ?
+        OR (discountCodeGroup IS NULL AND discountCode IN (${placeholders}))`,
+    totalParams
   );
   const totalUses = Number(totalRows?.[0]?.totalUses || 0);
   if (!userId) {
-    return { totalUses, userUses: 0 };
+    return { usageGroup, totalUses, userUses: 0 };
   }
+
   const [userRows] = await db.execute(
-    'SELECT COUNT(*) AS userUses FROM orders WHERE discountCode = ? AND userId = ?',
-    [normalizedCode, userId]
+    `SELECT COUNT(*) AS userUses
+     FROM orders
+     WHERE userId = ?
+       AND (
+         discountCodeGroup = ?
+         OR (discountCodeGroup IS NULL AND discountCode IN (${placeholders}))
+       )`,
+    [userId, usageGroup, ...aliasCodes]
   );
   return {
+    usageGroup,
     totalUses,
     userUses: Number(userRows?.[0]?.userUses || 0),
   };
@@ -529,6 +572,7 @@ async function buildOrderPricing({
   let discountCodeApplied = false;
   let appliedDiscountCode = null;
   let appliedDiscountName = null;
+  let appliedDiscountGroup = null;
   let discountCodeAmount = 0;
   let discountCodeError = null;
 
@@ -564,7 +608,12 @@ async function buildOrderPricing({
       if (usageLimitPerUser != null && !effectiveUserId) {
         failDiscountCode('Sign in is required to use this discount code');
       } else {
-        const usage = await getDiscountCodeUsage(discountCodeRequested, effectiveUserId, db);
+        const usage = await getDiscountCodeUsage(
+          codeRow,
+          discountCodeRequested,
+          effectiveUserId,
+          db
+        );
         if (usageLimitTotal != null && usage.totalUses >= usageLimitTotal) {
           failDiscountCode('Discount code usage limit has been reached');
         } else if (usageLimitPerUser != null && usage.userUses >= usageLimitPerUser) {
@@ -590,6 +639,7 @@ async function buildOrderPricing({
             discountCodeApplied = true;
             appliedDiscountCode = discountCodeRequested;
             appliedDiscountName = String(codeRow.name || discountCodeRequested);
+            appliedDiscountGroup = usage.usageGroup;
             discountCodeAmount = effectiveDiscount;
             effectiveItems = [
               ...effectiveItems,
@@ -622,6 +672,7 @@ async function buildOrderPricing({
     discountCodeApplied,
     discountCode: appliedDiscountCode,
     discountCodeName: appliedDiscountName,
+    discountCodeGroup: appliedDiscountGroup,
     discountCodeAmount,
     discountCodeError,
     effectiveItems,
@@ -2440,7 +2491,7 @@ app.post('/api/orders/create', async (c) => {
       createdAt = Date.now();
 
       await conn.execute(
-        'INSERT INTO orders (id, orderNumber, displayNumber, dateKey, userId, phoneNumber, items, total, paymentMethod, status, completedAt, createdAt, discountCode, discountAmount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO orders (id, orderNumber, displayNumber, dateKey, userId, phoneNumber, items, total, paymentMethod, status, completedAt, createdAt, discountCode, discountCodeGroup, discountAmount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
           orderId,
           orderNumber,
@@ -2455,6 +2506,7 @@ app.post('/api/orders/create', async (c) => {
           null,
           createdAt,
           pricing.discountCode,
+          pricing.discountCodeGroup,
           pricing.discountCodeAmount > 0 ? pricing.discountCodeAmount : null,
         ]
       );
@@ -2555,6 +2607,7 @@ app.post('/api/orders/create', async (c) => {
       rewardDiscountAmount: pricing.rewardDiscountAmount,
       discountCode: pricing.discountCode,
       discountCodeName: pricing.discountCodeName,
+      discountCodeGroup: pricing.discountCodeGroup,
       discountCodeAmount: pricing.discountCodeAmount,
       paymentMethod: paymentMethod || 'cash',
       status: 'received',
@@ -2889,6 +2942,7 @@ function mapOrderRow(row) {
     vatAmount,
     totalWithVat,
     discountCode: row.discountCode || null,
+    discountCodeGroup: row.discountCodeGroup || null,
     discountAmount: row.discountAmount != null ? Number(row.discountAmount) : 0,
     status: row.completedAt ? 'completed' : 'received',
     paymentMethod: row.paymentMethod,
