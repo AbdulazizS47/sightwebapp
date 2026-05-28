@@ -20,7 +20,7 @@ interface PricingSummary {
   vatAmount: number;
   total: number;
   totalWithVat: number;
-  rewardType: 'free' | 'half' | null;
+  rewardType: 'free' | null;
   rewardApplied: boolean;
   rewardDiscountAmount: number;
   discountCodeRequested: string | null;
@@ -86,9 +86,7 @@ export function CartModal({
       process: 'Process Order',
       processLoading: 'Processing...',
       redeemReward: 'Redeem reward',
-      freeCup: 'Free cup',
-      halfOff: '50% off',
-      discountCap: 'max 20 SAR',
+      freeCup: 'Free cup (5th order)',
       rewardApplied: 'Reward applied',
       discountCode: 'Discount code',
       discountCodePlaceholder: 'Enter code',
@@ -116,9 +114,7 @@ export function CartModal({
       process: 'إتمام الطلب',
       processLoading: 'جارٍ المعالجة...',
       redeemReward: 'استبدال المكافأة',
-      freeCup: 'كوب مجاني',
-      halfOff: 'خصم 50%',
-      discountCap: 'حد أقصى 20 ريال',
+      freeCup: 'كوب مجاني (الطلب الخامس)',
       rewardApplied: 'تم تطبيق المكافأة',
       discountCode: 'كود الخصم',
       discountCodePlaceholder: 'أدخل الكود',
@@ -139,7 +135,7 @@ export function CartModal({
   const text = content[language];
   const isRTL = language === 'ar';
   const vatRate = 0.15;
-  const maxRewardDiscount = 20;
+  const loyaltyRewardCycle = 5;
 
   const getCartKey = (item: CartItem) => item.cartKey || item.id;
   const previewEndpointUrls = getApiRequestUrls('/orders/price-preview');
@@ -180,19 +176,10 @@ export function CartModal({
   };
 
   const itemsTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const rewardType =
-    loyalty?.enabled && loyalty.stamps === 3
-      ? 'free'
-      : loyalty?.enabled && loyalty.stamps === 6
-        ? 'half'
-        : null;
+  const rewardType = loyalty?.enabled && loyalty.stamps === loyaltyRewardCycle ? 'free' : null;
   const rewardActive = Boolean(redeemReward && rewardType);
   const maxUnitPrice = items.reduce((max, item) => Math.max(max, item.price || 0), 0);
-  const rewardDiscountAmount = rewardActive
-    ? rewardType === 'free'
-      ? Math.min(maxUnitPrice, itemsTotal)
-      : Math.min(itemsTotal * 0.5, maxRewardDiscount)
-    : 0;
+  const rewardDiscountAmount = rewardActive ? Math.min(maxUnitPrice, itemsTotal) : 0;
   const fallbackTotal = Math.max(0, itemsTotal - rewardDiscountAmount);
   const fallbackVatAmount = fallbackTotal * (vatRate / (1 + vatRate));
   const fallbackSubtotal = fallbackTotal - fallbackVatAmount;
@@ -233,7 +220,7 @@ export function CartModal({
       .then(({ data: j }) => {
         if (j.success && j.loyalty) {
           const points = Number(j.loyalty.points || 0);
-          const stamps = points > 0 ? ((points - 1) % 6) + 1 : 0;
+          const stamps = points > 0 ? ((points - 1) % loyaltyRewardCycle) + 1 : 0;
           setLoyalty({ enabled: Boolean(Number(j.loyalty.enabled)), stamps });
         }
       })
@@ -501,7 +488,7 @@ export function CartModal({
               })}
             </div>
 
-            {loyalty?.enabled && loyalty.stamps === 3 && (
+            {loyalty?.enabled && loyalty.stamps === loyaltyRewardCycle && (
               <div className="mb-4">
                 <label className="flex items-center gap-2 text-sm">
                   <input
@@ -511,20 +498,6 @@ export function CartModal({
                   />
                   <span>
                     {text.redeemReward} - {text.freeCup}
-                  </span>
-                </label>
-              </div>
-            )}
-            {loyalty?.enabled && loyalty.stamps === 6 && (
-              <div className="mb-4">
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={redeemReward}
-                    onChange={(e) => setRedeemReward(e.target.checked)}
-                  />
-                  <span>
-                    {text.redeemReward} - {text.halfOff} ({text.discountCap})
                   </span>
                 </label>
               </div>

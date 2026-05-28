@@ -81,10 +81,9 @@ export function ProfilePage({
       progress: 'Progress',
       nextReward: 'Next reward',
       rewardAvailable: 'Reward available now',
-      freeCup: 'Free cup (3rd order)',
-      halfOff: '50% off (6th order, max 20 SAR)',
+      freeCup: 'Free cup (5th order)',
       startEarning: 'Place your first order to start collecting stamps.',
-      ordersOfSix: 'orders / 6',
+      ordersOfCycle: 'orders / 5',
       stamps: 'Stamps',
       loyaltyFetchFailed: 'Failed to load loyalty',
       loyaltyUpdateFailed: 'Failed to update loyalty',
@@ -120,10 +119,9 @@ export function ProfilePage({
       progress: 'التقدم',
       nextReward: 'المكافأة القادمة',
       rewardAvailable: 'مكافأة متاحة الآن',
-      freeCup: 'كوب مجاني (الطلب الثالث)',
-      halfOff: 'خصم 50% (الطلب السادس، حد 20 ريال)',
+      freeCup: 'كوب مجاني (الطلب الخامس)',
       startEarning: 'اطلب أول طلب لتبدأ جمع الطوابع.',
-      ordersOfSix: 'طلبات / 6',
+      ordersOfCycle: 'طلبات / 5',
       stamps: 'الطوابع',
       loyaltyFetchFailed: 'فشل تحميل بيانات الولاء',
       loyaltyUpdateFailed: 'فشل تحديث بيانات الولاء',
@@ -144,6 +142,7 @@ export function ProfilePage({
   } as const;
 
   const text = content[language];
+  const loyaltyRewardCycle = 5;
 
   useEffect(() => {
     setName(user?.name || '');
@@ -226,11 +225,9 @@ export function ProfilePage({
   };
 
   const points = Number(loyalty?.points || 0);
-  const stamps = loyalty?.enabled && points > 0 ? ((points - 1) % 6) + 1 : 0;
-  const rewardAvailable = stamps === 3 || stamps === 6;
-  const nextTarget = stamps < 3 ? 3 : 6;
-  const progressPct = Math.max(0, Math.min(100, (stamps / 6) * 100));
-  const nextRewardLabel = nextTarget === 3 ? text.freeCup : text.halfOff;
+  const stamps = loyalty?.enabled && points > 0 ? ((points - 1) % loyaltyRewardCycle) + 1 : 0;
+  const rewardAvailable = stamps === loyaltyRewardCycle;
+  const progressPct = Math.max(0, Math.min(100, (stamps / loyaltyRewardCycle) * 100));
 
   useEffect(() => {
     loadLoyalty();
@@ -346,7 +343,7 @@ export function ProfilePage({
                   </div>
                   <div className="mt-1 font-mono text-2xl text-[var(--matte-black)] leading-none">
                     {stamps}
-                    <span className="text-base opacity-60">/6</span>
+                    <span className="text-base opacity-60">/{loyaltyRewardCycle}</span>
                   </div>
                   <div className="text-[10px] text-[var(--matte-black)] opacity-60 mt-1">
                     {points} {language === 'en' ? 'orders' : 'طلبات'}
@@ -363,9 +360,9 @@ export function ProfilePage({
                     style={{ width: `${progressPct}%` }}
                   />
                   <div className="relative flex justify-between">
-                    {[1, 2, 3, 4, 5, 6].map((n) => {
+                    {[1, 2, 3, 4, 5].map((n) => {
                       const filled = n <= stamps;
-                      const isMilestone = n === 3 || n === 6;
+                      const isMilestone = n === loyaltyRewardCycle;
                       return (
                         <div key={n} className="flex flex-col items-center">
                           <div
@@ -405,12 +402,12 @@ export function ProfilePage({
                       {rewardAvailable ? text.rewardAvailable : text.nextReward}
                     </div>
                     <div className="text-xs text-[var(--matte-black)]">
-                      <span className="font-medium">{nextRewardLabel}</span>
+                      <span className="font-medium">{text.freeCup}</span>
                     </div>
                   </div>
                 )}
                 <div className="mt-2 text-[10px] text-[var(--matte-black)] opacity-60">
-                  {text.freeCup} · {text.halfOff}
+                  {text.freeCup}
                 </div>
               </div>
 

@@ -140,7 +140,7 @@ const EXT_TO_IMAGE_CONTENT_TYPE = {
 const UPLOAD_ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png']);
 const MAX_UPLOAD_IMAGE_BYTES = 1024 * 1024;
 const ORDER_VAT_RATE = 0.15;
-const LOYALTY_HALF_OFF_MAX_DISCOUNT = 20;
+const LOYALTY_REWARD_CYCLE = 5;
 const BUILD_DIR = path.join(process.cwd(), 'build');
 // In-memory cache of sessions (persistent store is MySQL)
 const sessions = new Map();
@@ -528,8 +528,8 @@ async function buildOrderPricing({
       [effectiveUserId]
     );
     const points = Number(rows?.[0]?.points || 0);
-    const stamps = points > 0 ? ((points - 1) % 6) + 1 : 0;
-    rewardType = stamps === 3 ? 'free' : stamps === 6 ? 'half' : null;
+    const stamps = points > 0 ? ((points - 1) % LOYALTY_REWARD_CYCLE) + 1 : 0;
+    rewardType = stamps === LOYALTY_REWARD_CYCLE ? 'free' : null;
 
     if (rewardType === 'free') {
       const maxUnitPrice = effectiveItems.reduce(
@@ -537,21 +537,6 @@ async function buildOrderPricing({
         0
       );
       const discount = roundMoney(Math.min(maxUnitPrice, effectiveTotal));
-      if (discount > 0) {
-        rewardDiscountAmount = discount;
-        effectiveItems = [
-          ...effectiveItems,
-          {
-            id: 'reward-discount',
-            name: effectiveLanguage === 'ar' ? 'خصم المكافأة' : 'Reward discount',
-            price: -discount,
-            quantity: 1,
-          },
-        ];
-        effectiveTotal = roundMoney(Math.max(0, effectiveTotal - discount));
-      }
-    } else if (rewardType === 'half') {
-      const discount = roundMoney(Math.min(effectiveTotal * 0.5, LOYALTY_HALF_OFF_MAX_DISCOUNT));
       if (discount > 0) {
         rewardDiscountAmount = discount;
         effectiveItems = [
@@ -2582,7 +2567,7 @@ app.post('/api/orders/create', async (c) => {
         'INSERT INTO loyalty_accounts (userId, points, tier, enabled, enrollmentDate) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE enabled=1, enrollmentDate=IFNULL(enrollmentDate, VALUES(enrollmentDate))',
         [effectiveUserId, 0, 'basic', 1, nowTs]
       );
-      // Accrue loyalty points (1 per order). UI derives the 6-stamp cycle from this value.
+      // Accrue loyalty points (1 per order). UI derives the 5-order reward cycle from this value.
       await pool.execute(
         'UPDATE loyalty_accounts SET enabled=1, points = points + 1 WHERE userId = ?',
         [effectiveUserId]
