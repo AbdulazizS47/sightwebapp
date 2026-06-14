@@ -8,7 +8,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pool, initSchema, ensureDatabase } from './db.js';
 import { sendOtpSms } from './sms.js';
-import { getOrderNotificationStatus, sendNewOrderNotification } from './notifications.js';
+import {
+  getOrderNotificationStatus,
+  sendInventoryLowStockNotification,
+  sendNewOrderNotification,
+} from './notifications.js';
 
 const app = new Hono();
 const printApi = new Hono();
@@ -793,6 +797,7 @@ async function releaseNamedLock(conn, lockName) {
 const INVENTORY_TYPES = new Set(['bean', 'sweet']);
 const INVENTORY_UNITS = new Set(['g', 'pcs']);
 const BEAN_RESTOCK_OPTIONS_G = [500, 1000];
+const MANUAL_INVENTORY_REASONS = new Set(['adjustment', 'waste', 'correction']);
 
 function slugifyId(input, fallback = 'item') {
   const base = String(input || '')
@@ -841,6 +846,23 @@ function validateInventoryTypeUnit(type, unit) {
   return null;
 }
 
+function roundInventoryQty(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function isLowStock(stockQty, lowStockThreshold) {
+  return Number(stockQty || 0) <= Number(lowStockThreshold || 0);
+}
+
+function shouldSendLowStockAlert({ active, stockQty, lowStockThreshold, lowStockAlertSentAt }) {
+  return (
+    Boolean(Number(active)) &&
+    Number(lowStockThreshold || 0) > 0 &&
+    isLowStock(stockQty, lowStockThreshold) &&
+    !Number(lowStockAlertSentAt || 0)
+  );
+}
+
 function mapInventoryItemRow(row) {
   const stockQty = Number(row?.stockQty || 0);
   const lowStockThreshold = Number(row?.lowStockThreshold || 0);
@@ -852,9 +874,10 @@ function mapInventoryItemRow(row) {
     unit: String(row.unit || ''),
     stockQty,
     lowStockThreshold,
+    lowStockAlertSentAt: row?.lowStockAlertSentAt != null ? Number(row.lowStockAlertSentAt) : null,
     active: Boolean(Number(row.active)),
     notes: row.notes != null ? String(row.notes) : null,
-    isLowStock: stockQty <= lowStockThreshold,
+    isLowStock: isLowStock(stockQty, lowStockThreshold),
     createdAt: row.createdAt != null ? Number(row.createdAt) : null,
     updatedAt: row.updatedAt != null ? Number(row.updatedAt) : null,
   };
@@ -883,6 +906,21 @@ function mapInventoryRuleRow(row) {
     },
     createdAt: row.createdAt != null ? Number(row.createdAt) : null,
     updatedAt: row.updatedAt != null ? Number(row.updatedAt) : null,
+  };
+}
+
+function mapInventoryMovementRow(row) {
+  return {
+    id: Number(row.id || 0),
+    inventoryItemId: String(row.inventoryItemId || ''),
+    direction: String(row.direction || ''),
+    qty: Number(row.qty || 0),
+    reason: String(row.reason || ''),
+    orderId: row.orderId != null ? String(row.orderId) : null,
+    note: row.note != null ? String(row.note) : null,
+    createdByUserId: row.createdByUserId != null ? String(row.createdByUserId) : null,
+    createdByName: row.createdByName != null ? String(row.createdByName) : null,
+    createdAt: row.createdAt != null ? Number(row.createdAt) : null,
   };
 }
 
@@ -1505,9 +1543,9 @@ app.post('/api/admin/inventory/item', async (c) => {
 
     await pool.execute(
       `INSERT INTO inventory_items
-       (id, nameEn, nameAr, type, unit, stockQty, lowStockThreshold, active, notes, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, nameEn, nameAr, type, unit, 0, lowStockThresholdNum, active ? 1 : 0, notes, now, now]
+       (id, nameEn, nameAr, type, unit, stockQty, lowStockThreshold, lowStockAlertSentAt, active, notes, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, nameEn, nameAr, type, unit, 0, lowStockThresholdNum, null, active ? 1 : 0, notes, now, now]
     );
 
     return c.json({
@@ -1520,6 +1558,7 @@ app.post('/api/admin/inventory/item', async (c) => {
         unit,
         stockQty: 0,
         lowStockThreshold: lowStockThresholdNum,
+        lowStockAlertSentAt: null,
         active: active ? 1 : 0,
         notes,
         createdAt: now,
@@ -1585,10 +1624,27 @@ app.put('/api/admin/inventory/item/:id', async (c) => {
         ? String(existing.notes)
         : null;
     const now = Date.now();
+    const nextStockQty = roundInventoryQty(existing.stockQty);
+    const existingLowStockAlertSentAt =
+      existing.lowStockAlertSentAt != null ? Number(existing.lowStockAlertSentAt) : null;
+    const nextLowStockAlertSentAt = shouldSendLowStockAlert({
+      active: nextActive ? 1 : 0,
+      stockQty: nextStockQty,
+      lowStockThreshold: nextLowStockThreshold,
+      lowStockAlertSentAt: existingLowStockAlertSentAt,
+    })
+      ? now
+      : Boolean(nextActive) &&
+          Number(nextLowStockThreshold) > 0 &&
+          isLowStock(nextStockQty, nextLowStockThreshold)
+        ? existingLowStockAlertSentAt
+        : null;
+    const shouldNotifyLowStock =
+      nextLowStockAlertSentAt === now && existingLowStockAlertSentAt !== nextLowStockAlertSentAt;
 
     await pool.execute(
       `UPDATE inventory_items
-       SET nameEn = ?, nameAr = ?, type = ?, unit = ?, lowStockThreshold = ?, active = ?, notes = ?, updatedAt = ?
+       SET nameEn = ?, nameAr = ?, type = ?, unit = ?, lowStockThreshold = ?, lowStockAlertSentAt = ?, active = ?, notes = ?, updatedAt = ?
        WHERE id = ?`,
       [
         nextNameEn,
@@ -1596,6 +1652,7 @@ app.put('/api/admin/inventory/item/:id', async (c) => {
         nextType,
         nextUnit,
         nextLowStockThreshold,
+        nextLowStockAlertSentAt,
         nextActive ? 1 : 0,
         nextNotes,
         now,
@@ -1603,7 +1660,7 @@ app.put('/api/admin/inventory/item/:id', async (c) => {
       ]
     );
 
-    return c.json({
+    const responsePayload = {
       success: true,
       item: mapInventoryItemRow({
         ...existing,
@@ -1613,11 +1670,30 @@ app.put('/api/admin/inventory/item/:id', async (c) => {
         type: nextType,
         unit: nextUnit,
         lowStockThreshold: nextLowStockThreshold,
+        lowStockAlertSentAt: nextLowStockAlertSentAt,
         active: nextActive ? 1 : 0,
         notes: nextNotes,
         updatedAt: now,
       }),
-    });
+    };
+
+    if (shouldNotifyLowStock) {
+      sendInventoryLowStockNotification({
+        id,
+        nameEn: nextNameEn,
+        nameAr: nextNameAr,
+        unit: nextUnit,
+        stockQty: nextStockQty,
+        lowStockThreshold: nextLowStockThreshold,
+      }).catch((notificationError) => {
+        console.error('Failed to send low stock notification after inventory update', {
+          inventoryItemId: id,
+          error: notificationError?.message || notificationError,
+        });
+      });
+    }
+
+    return c.json(responsePayload);
   } catch (e) {
     console.error('Error updating inventory item', e);
     return c.json({ error: 'Failed to update inventory item' }, 500);
@@ -1671,11 +1747,20 @@ app.post('/api/admin/inventory/item/:id/restock', async (c) => {
     }
 
     const now = Date.now();
-    const nextStockQty = Number(item.stockQty || 0) + Number(qty);
+    const nextStockQty = roundInventoryQty(Number(item.stockQty || 0) + Number(qty));
+    const lowStockThreshold = Number(item.lowStockThreshold || 0);
+    const nextLowStockAlertSentAt =
+      Boolean(Number(item.active)) &&
+      Number(lowStockThreshold) > 0 &&
+      isLowStock(nextStockQty, lowStockThreshold)
+        ? item.lowStockAlertSentAt != null
+          ? Number(item.lowStockAlertSentAt)
+          : null
+        : null;
 
     await conn.execute(
-      'UPDATE inventory_items SET stockQty = ?, updatedAt = ? WHERE id = ?',
-      [nextStockQty, now, id]
+      'UPDATE inventory_items SET stockQty = ?, lowStockAlertSentAt = ?, updatedAt = ? WHERE id = ?',
+      [nextStockQty, nextLowStockAlertSentAt, now, id]
     );
     const [movementRes] = await conn.execute(
       `INSERT INTO inventory_movements
@@ -1691,6 +1776,7 @@ app.post('/api/admin/inventory/item/:id/restock', async (c) => {
       item: mapInventoryItemRow({
         ...item,
         stockQty: nextStockQty,
+        lowStockAlertSentAt: nextLowStockAlertSentAt,
         updatedAt: now,
       }),
       movement: {
@@ -1713,6 +1799,180 @@ app.post('/api/admin/inventory/item/:id/restock', async (c) => {
     }
     console.error('Error restocking inventory item', e);
     return c.json({ error: 'Failed to restock inventory item' }, 500);
+  } finally {
+    conn.release();
+  }
+});
+
+// Admin Inventory Item: recent movements
+app.get('/api/admin/inventory/item/:id/movements', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const id = String(c.req.param('id') || '').trim();
+    if (!id) return c.json({ error: 'Inventory item id is required' }, 400);
+    const requestedLimit = Number(c.req.query('limit') || 8);
+    const limit = Math.max(1, Math.min(Number.isFinite(requestedLimit) ? requestedLimit : 8, 50));
+
+    const [rows] = await pool.execute(
+      `SELECT
+         m.*,
+         u.name AS createdByName
+       FROM inventory_movements m
+       LEFT JOIN users u ON u.id = m.createdByUserId
+       WHERE m.inventoryItemId = ?
+       ORDER BY m.createdAt DESC, m.id DESC
+       LIMIT ?`,
+      [id, limit]
+    );
+
+    return c.json({
+      success: true,
+      movements: (Array.isArray(rows) ? rows : []).map(mapInventoryMovementRow),
+    });
+  } catch (e) {
+    console.error('Error fetching inventory movements', e);
+    return c.json({ error: 'Failed to fetch inventory movements' }, 500);
+  }
+});
+
+// Admin Inventory Item: manual adjustment
+app.post('/api/admin/inventory/item/:id/adjust', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+
+  const conn = await pool.getConnection();
+  try {
+    const id = String(c.req.param('id') || '').trim();
+    if (!id) return c.json({ error: 'Inventory item id is required' }, 400);
+
+    const body = await c.req.json().catch(() => ({}));
+    const qtyDelta = parseFiniteNumber(body?.qtyDelta);
+    if (qtyDelta == null || qtyDelta === 0) {
+      return c.json({ error: 'qtyDelta must be a non-zero number' }, 400);
+    }
+
+    const reasonRaw = String(body?.reason || 'adjustment')
+      .trim()
+      .toLowerCase();
+    const reason = MANUAL_INVENTORY_REASONS.has(reasonRaw) ? reasonRaw : null;
+    if (!reason) {
+      return c.json({ error: 'Invalid adjustment reason' }, 400);
+    }
+
+    const note = body?.note == null ? null : String(body.note).trim() || null;
+    const adminUser = await getAdminSessionUserFromRequest(c);
+
+    await conn.beginTransaction();
+    const [rows] = await conn.execute(
+      'SELECT * FROM inventory_items WHERE id = ? LIMIT 1 FOR UPDATE',
+      [id]
+    );
+    const item = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    if (!item) {
+      await conn.rollback();
+      return c.json({ error: 'Inventory item not found' }, 404);
+    }
+
+    const itemUnit = String(item.unit || '');
+    if (itemUnit === 'pcs' && !isIntegerLike(qtyDelta)) {
+      await conn.rollback();
+      return c.json({ error: 'qtyDelta must be a whole number for pcs units' }, 400);
+    }
+
+    const currentStockQty = roundInventoryQty(Number(item.stockQty || 0));
+    const nextStockQty = roundInventoryQty(currentStockQty + Number(qtyDelta));
+    if (nextStockQty < 0) {
+      await conn.rollback();
+      return c.json(
+        {
+          error: 'Adjustment would make stock negative',
+          currentStockQty,
+          qtyDelta,
+        },
+        409
+      );
+    }
+
+    const now = Date.now();
+    const lowStockThreshold = Number(item.lowStockThreshold || 0);
+    const existingLowStockAlertSentAt =
+      item.lowStockAlertSentAt != null ? Number(item.lowStockAlertSentAt) : null;
+    const nextLowStockAlertSentAt = shouldSendLowStockAlert({
+      active: item.active,
+      stockQty: nextStockQty,
+      lowStockThreshold,
+      lowStockAlertSentAt: existingLowStockAlertSentAt,
+    })
+      ? now
+      : Boolean(Number(item.active)) &&
+          Number(lowStockThreshold) > 0 &&
+          isLowStock(nextStockQty, lowStockThreshold)
+        ? existingLowStockAlertSentAt
+        : null;
+    const shouldNotifyLowStock =
+      nextLowStockAlertSentAt === now && existingLowStockAlertSentAt !== nextLowStockAlertSentAt;
+    const movementDirection = Number(qtyDelta) > 0 ? 'in' : 'out';
+    const movementQty = Math.abs(roundInventoryQty(qtyDelta));
+
+    await conn.execute(
+      'UPDATE inventory_items SET stockQty = ?, lowStockAlertSentAt = ?, updatedAt = ? WHERE id = ?',
+      [nextStockQty, nextLowStockAlertSentAt, now, id]
+    );
+    const [movementRes] = await conn.execute(
+      `INSERT INTO inventory_movements
+       (inventoryItemId, direction, qty, reason, orderId, note, createdByUserId, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, movementDirection, movementQty, reason, null, note, adminUser?.id || null, now]
+    );
+
+    await conn.commit();
+
+    if (shouldNotifyLowStock) {
+      sendInventoryLowStockNotification({
+        id,
+        nameEn: String(item.nameEn || ''),
+        nameAr: String(item.nameAr || ''),
+        unit: itemUnit,
+        stockQty: nextStockQty,
+        lowStockThreshold,
+      }).catch((notificationError) => {
+        console.error('Failed to send low stock notification after manual adjustment', {
+          inventoryItemId: id,
+          error: notificationError?.message || notificationError,
+        });
+      });
+    }
+
+    return c.json({
+      success: true,
+      item: mapInventoryItemRow({
+        ...item,
+        stockQty: nextStockQty,
+        lowStockAlertSentAt: nextLowStockAlertSentAt,
+        updatedAt: now,
+      }),
+      movement: mapInventoryMovementRow({
+        id: Number(movementRes.insertId || 0),
+        inventoryItemId: id,
+        direction: movementDirection,
+        qty: movementQty,
+        reason,
+        orderId: null,
+        note,
+        createdByUserId: adminUser?.id || null,
+        createdByName: adminUser?.name || null,
+        createdAt: now,
+      }),
+    });
+  } catch (e) {
+    try {
+      await conn.rollback();
+    } catch {
+      // ignore rollback failure; original error is returned below
+    }
+    console.error('Error adjusting inventory item', e);
+    return c.json({ error: 'Failed to adjust inventory item' }, 500);
   } finally {
     conn.release();
   }
@@ -2349,13 +2609,13 @@ app.post('/api/orders/create', async (c) => {
 
     const dateKey = await getCurrentDateKey();
     const paymentMethodValue = paymentMethod || 'cash';
-    const roundInventoryQty = (value) => Math.round(Number(value || 0) * 100) / 100;
 
     let displayNumber = null;
     let orderNumber = null;
     let orderId = null;
     let createdAt = null;
     let inventoryWarnings = null;
+    const lowStockNotifications = [];
 
     const conn = await pool.getConnection();
     let txOpen = false;
@@ -2425,7 +2685,7 @@ app.post('/api/orders/create', async (c) => {
         const inventoryIds = Array.from(inventoryRequirements.keys());
         const inventoryPlaceholders = inventoryIds.map(() => '?').join(',');
         const [inventoryRows] = await conn.execute(
-          `SELECT id, nameEn, nameAr, unit, stockQty, active
+          `SELECT id, nameEn, nameAr, unit, stockQty, lowStockThreshold, lowStockAlertSentAt, active
            FROM inventory_items
            WHERE id IN (${inventoryPlaceholders})
            FOR UPDATE`,
@@ -2529,10 +2789,21 @@ app.post('/api/orders/create', async (c) => {
           const nextStockQty = roundInventoryQty(
             Number(inventoryRow.stockQty || 0) - Number(requirement.requiredQty || 0)
           );
+          const lowStockThreshold = Number(inventoryRow.lowStockThreshold || 0);
+          const existingLowStockAlertSentAt =
+            inventoryRow.lowStockAlertSentAt != null ? Number(inventoryRow.lowStockAlertSentAt) : null;
+          const nextLowStockAlertSentAt = shouldSendLowStockAlert({
+            active: inventoryRow.active,
+            stockQty: nextStockQty,
+            lowStockThreshold,
+            lowStockAlertSentAt: existingLowStockAlertSentAt,
+          })
+            ? createdAt
+            : existingLowStockAlertSentAt;
 
           await conn.execute(
-            'UPDATE inventory_items SET stockQty = ?, updatedAt = ? WHERE id = ?',
-            [nextStockQty, createdAt, requirement.inventoryItemId]
+            'UPDATE inventory_items SET stockQty = ?, lowStockAlertSentAt = ?, updatedAt = ? WHERE id = ?',
+            [nextStockQty, nextLowStockAlertSentAt, createdAt, requirement.inventoryItemId]
           );
           await conn.execute(
             `INSERT INTO inventory_movements
@@ -2551,6 +2822,18 @@ app.post('/api/orders/create', async (c) => {
           );
 
           inventoryRow.stockQty = nextStockQty;
+          inventoryRow.lowStockAlertSentAt = nextLowStockAlertSentAt;
+
+          if (nextLowStockAlertSentAt === createdAt && existingLowStockAlertSentAt !== nextLowStockAlertSentAt) {
+            lowStockNotifications.push({
+              id: String(inventoryRow.id),
+              nameEn: String(inventoryRow.nameEn || ''),
+              nameAr: String(inventoryRow.nameAr || ''),
+              unit: String(inventoryRow.unit || ''),
+              stockQty: nextStockQty,
+              lowStockThreshold,
+            });
+          }
         }
       }
 
@@ -2644,6 +2927,15 @@ app.post('/api/orders/create', async (c) => {
         error: notificationError?.message || notificationError,
       });
     });
+    for (const item of lowStockNotifications) {
+      sendInventoryLowStockNotification(item).catch((notificationError) => {
+        console.error('Failed to send low stock notification after sale', {
+          orderId,
+          inventoryItemId: item.id,
+          error: notificationError?.message || notificationError,
+        });
+      });
+    }
 
     return c.json(responsePayload);
   } catch (e) {

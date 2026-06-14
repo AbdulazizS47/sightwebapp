@@ -40,6 +40,13 @@ function formatMoney(value) {
   return amount.toFixed(2);
 }
 
+function formatQty(value, unit) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return `0 ${unit || ''}`.trim();
+  if (unit === 'pcs') return `${Math.round(amount)} ${unit}`.trim();
+  return `${amount.toFixed(Number.isInteger(amount) ? 0 : 2)} ${unit || ''}`.trim();
+}
+
 function formatPhone(value) {
   const raw = String(value || '').trim();
   if (!raw) return '-';
@@ -59,7 +66,7 @@ function formatOrderItem(item) {
   return `- ${quantity}x ${name}${priceText}`;
 }
 
-export function getOrderNotificationStatus() {
+function getTelegramNotificationStatus() {
   const telegramConfigured = Boolean(telegramBotToken && telegramChatIds.length > 0);
   const enabled = provider === 'telegram' || (!provider && telegramConfigured);
 
@@ -71,6 +78,10 @@ export function getOrderNotificationStatus() {
     missingTelegramBotToken: enabled && !telegramBotToken,
     missingTelegramChatId: enabled && telegramChatIds.length === 0,
   };
+}
+
+export function getOrderNotificationStatus() {
+  return getTelegramNotificationStatus();
 }
 
 export function buildNewOrderMessage(order) {
@@ -96,6 +107,23 @@ export function buildNewOrderMessage(order) {
     'Items:',
     `${itemLines}${moreLine}`,
     ...(adminUrl ? ['', `Admin: ${adminUrl}/#/dashboard/live-orders`] : []),
+  ].join('\n');
+}
+
+export function buildInventoryLowStockMessage(item) {
+  const name = String(item?.nameEn || item?.nameAr || item?.id || 'Inventory item').trim();
+  const stockQty = formatQty(item?.stockQty, item?.unit);
+  const thresholdQty = formatQty(item?.lowStockThreshold, item?.unit);
+  const adminUrl = (process.env.PUBLIC_BASE_URL || process.env.APP_PUBLIC_ORIGIN || '')
+    .trim()
+    .replace(/\/+$/, '');
+
+  return [
+    `Low stock alert: ${name}`,
+    `Current stock: ${stockQty}`,
+    `Low stock limit: ${thresholdQty}`,
+    `Item ID: ${String(item?.id || '-').trim() || '-'}`,
+    ...(adminUrl ? ['', `Admin: ${adminUrl}/#/dashboard/inventory`] : []),
   ].join('\n');
 }
 
@@ -133,12 +161,23 @@ async function postTelegramMessage(chatId, text) {
 }
 
 export async function sendNewOrderNotification(order) {
-  const status = getOrderNotificationStatus();
+  const status = getTelegramNotificationStatus();
   if (!status.enabled) return false;
   if (!telegramBotToken) throw new Error('TELEGRAM_BOT_TOKEN is not set');
   if (telegramChatIds.length === 0) throw new Error('TELEGRAM_CHAT_ID is not set');
 
   const message = buildNewOrderMessage(order);
+  await Promise.all(telegramChatIds.map((chatId) => postTelegramMessage(chatId, message)));
+  return true;
+}
+
+export async function sendInventoryLowStockNotification(item) {
+  const status = getTelegramNotificationStatus();
+  if (!status.enabled) return false;
+  if (!telegramBotToken) throw new Error('TELEGRAM_BOT_TOKEN is not set');
+  if (telegramChatIds.length === 0) throw new Error('TELEGRAM_CHAT_ID is not set');
+
+  const message = buildInventoryLowStockMessage(item);
   await Promise.all(telegramChatIds.map((chatId) => postTelegramMessage(chatId, message)));
   return true;
 }

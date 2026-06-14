@@ -234,6 +234,7 @@ export async function initSchema() {
       unit VARCHAR(16) NOT NULL,
       stockQty DECIMAL(12,2) NOT NULL DEFAULT 0,
       lowStockThreshold DECIMAL(12,2) NOT NULL DEFAULT 0,
+      lowStockAlertSentAt BIGINT NULL,
       active TINYINT(1) NOT NULL DEFAULT 1,
       notes TEXT NULL,
       createdAt BIGINT NOT NULL,
@@ -313,6 +314,7 @@ export async function initSchema() {
   await ensureColumn('ALTER TABLE sessions ADD COLUMN expiresAt BIGINT NULL');
   await ensureColumn('ALTER TABLE items ADD COLUMN descriptionEn TEXT NULL');
   await ensureColumn('ALTER TABLE items ADD COLUMN descriptionAr TEXT NULL');
+  await ensureColumn('ALTER TABLE inventory_items ADD COLUMN lowStockAlertSentAt BIGINT NULL');
   await ensureIndex('CREATE UNIQUE INDEX idx_orders_orderNumber ON orders(orderNumber)');
   await ensureIndex('CREATE INDEX idx_orders_date_display ON orders(dateKey, displayNumber)');
   await ensureIndex('CREATE INDEX idx_orders_createdAt ON orders(createdAt)');

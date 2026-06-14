@@ -71,16 +71,17 @@ Important frontend variables:
 - The `/uploads` directory is not persistent on Railway. Move uploads to object storage if long-term retention is required.
 - The Android print bridge must remain on the tablet because Bluetooth printing is local to the device.
 - Telegram order alerts send to the configured group chat after each successful order.
+- Telegram low-stock alerts send to the same configured chat when an active inventory item falls to or below its low-stock threshold.
 - `SMS_PROVIDER=console` should not be used on a live service unless you intentionally want OTPs logged instead of sent.
 - For Android OTP suggestions, set `OTP_WEB_ORIGIN` to the customer-facing site host and make the SMS provider template end with `@your-domain #OTP_CODE`.
 
-## Telegram Order Alerts
+## Telegram Alerts
 
 1. Create a bot in Telegram with BotFather and copy the token.
 2. Add the bot to the staff group chat.
 3. Send any message in the group, then get the group chat id from the bot updates or a Telegram chat-id helper bot.
 4. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` on the API service.
-5. Restart the API service and create a test order.
+5. Restart the API service and create a test order or lower an inventory item below its low-stock threshold.
 
 ## Deployment
 

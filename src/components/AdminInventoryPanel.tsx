@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Plus, RefreshCw, Trash2, Edit2, Check, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Plus, RefreshCw, Trash2, Edit2, Check, X, Search, Settings2, History } from 'lucide-react';
 import { apiBaseUrl } from '../utils/api';
 
 interface AdminInventoryPanelProps {
@@ -18,6 +18,7 @@ interface InventoryItemRow {
   unit: InventoryUnit;
   stockQty: number;
   lowStockThreshold: number;
+  lowStockAlertSentAt?: number | null;
   active: boolean;
   notes: string | null;
   isLowStock: boolean;
@@ -66,9 +67,33 @@ interface InventorySummaryResponse {
   error?: string;
 }
 
+interface InventoryMovement {
+  id: number;
+  inventoryItemId: string;
+  direction: string;
+  qty: number;
+  reason: string;
+  orderId: string | null;
+  note: string | null;
+  createdByUserId: string | null;
+  createdByName?: string | null;
+  createdAt: number | null;
+}
+
 const formatQty = (value: number, unit: InventoryUnit | string) => {
   if (unit === 'pcs') return String(Math.round(value));
   return Number(value).toFixed(Number.isInteger(value) ? 0 : 2);
+};
+
+const formatDateTime = (value: number | null, locale: string) => {
+  if (!value) return '-';
+  return new Date(value).toLocaleString(locale, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 };
 
 export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPanelProps) {
@@ -78,16 +103,64 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
       title: 'Inventory',
       subtitle: 'Track beans and sweets stock and link menu items to consumption rules.',
       refresh: 'Refresh',
+      quickFilters: 'Quick Filters',
+      searchItems: 'Search items by name, id, or notes',
+      searchRules: 'Search rules by menu item or inventory item',
+      searchPlaceholder: 'Search',
+      allItems: 'All Items',
+      sortBy: 'Sort By',
+      filterBy: 'Filter By',
+      showAll: 'Show All',
+      lowOnly: 'Low Stock Only',
+      activeOnly: 'Active Only',
+      inactiveOnly: 'Inactive Only',
+      nameAZ: 'Name A-Z',
+      updatedNewest: 'Recently Updated',
+      stockLowHigh: 'Stock Low-High',
+      stockHighLow: 'Stock High-Low',
+      thresholdHighLow: 'Threshold High-Low',
+      rulesSearch: 'Rules Search',
+      allCategories: 'All Categories',
+      menuAZ: 'Menu A-Z',
+      inventoryAZ: 'Inventory A-Z',
+      recentlyChanged: 'Recently Changed',
+      showing: 'Showing',
+      of: 'of',
       loading: 'Loading inventory...',
       inventoryItems: 'Inventory Items',
       beans: 'Beans',
       sweets: 'Sweets',
       lowStock: 'Low Stock',
+      inStock: 'In Stock',
       active: 'Active',
       inactive: 'Inactive',
       stock: 'Stock',
       threshold: 'Low Stock Threshold',
+      thresholdHint: 'Telegram alert sends once when stock reaches this limit.',
       restock: 'Restock',
+      manage: 'Manage',
+      close: 'Close',
+      stockActions: 'Stock Actions',
+      adjustmentTitle: 'Manual Adjustment',
+      adjustmentQty: 'Adjustment Qty',
+      adjustmentHelp: 'Use a positive number to add stock or a negative number to reduce it.',
+      adjustmentReason: 'Reason',
+      adjustmentNote: 'Note (optional)',
+      applyAdjustment: 'Apply Adjustment',
+      applyingAdjustment: 'Applying...',
+      reasonAdjustment: 'General Adjustment',
+      reasonWaste: 'Waste / Spoilage',
+      reasonCorrection: 'Count Correction',
+      reasonSale: 'Sale',
+      recentMovements: 'Recent Movements',
+      refreshHistory: 'Refresh History',
+      loadingHistory: 'Loading history...',
+      noMovements: 'No movements yet',
+      byUser: 'By',
+      orderRef: 'Order',
+      prefillRule: 'Create Rule',
+      prefillRuleSuccess: 'Rule form is ready for this menu item.',
+      noActiveInventoryHint: 'Add or activate an inventory item first.',
       addInventoryItem: 'Add Inventory Item',
       type: 'Type',
       bean: 'Bean',
@@ -130,16 +203,64 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
       title: 'المخزون',
       subtitle: 'تتبع مخزون البن والحلويات وربط عناصر القائمة بقواعد الاستهلاك.',
       refresh: 'تحديث',
+      quickFilters: 'فلاتر سريعة',
+      searchItems: 'ابحث في العناصر بالاسم أو المعرف أو الملاحظات',
+      searchRules: 'ابحث في القواعد باسم عنصر القائمة أو عنصر المخزون',
+      searchPlaceholder: 'بحث',
+      allItems: 'كل العناصر',
+      sortBy: 'ترتيب حسب',
+      filterBy: 'تصفية حسب',
+      showAll: 'عرض الكل',
+      lowOnly: 'المخزون المنخفض فقط',
+      activeOnly: 'النشط فقط',
+      inactiveOnly: 'غير النشط فقط',
+      nameAZ: 'الاسم أ-ي',
+      updatedNewest: 'الأحدث تحديثًا',
+      stockLowHigh: 'المخزون من الأقل للأعلى',
+      stockHighLow: 'المخزون من الأعلى للأقل',
+      thresholdHighLow: 'الحد من الأعلى للأقل',
+      rulesSearch: 'بحث القواعد',
+      allCategories: 'كل الفئات',
+      menuAZ: 'القائمة أ-ي',
+      inventoryAZ: 'المخزون أ-ي',
+      recentlyChanged: 'الأحدث تغييرًا',
+      showing: 'عرض',
+      of: 'من',
       loading: 'جاري تحميل المخزون...',
       inventoryItems: 'عناصر المخزون',
       beans: 'البن',
       sweets: 'الحلويات',
       lowStock: 'مخزون منخفض',
+      inStock: 'متوفر',
       active: 'نشط',
       inactive: 'غير نشط',
       stock: 'المخزون',
       threshold: 'حد المخزون المنخفض',
+      thresholdHint: 'يتم إرسال تنبيه تيليجرام مرة واحدة عند وصول المخزون لهذا الحد.',
       restock: 'إضافة مخزون',
+      manage: 'إدارة',
+      close: 'إغلاق',
+      stockActions: 'إجراءات المخزون',
+      adjustmentTitle: 'تعديل يدوي',
+      adjustmentQty: 'كمية التعديل',
+      adjustmentHelp: 'استخدم رقمًا موجبًا لإضافة مخزون أو رقمًا سالبًا لتقليله.',
+      adjustmentReason: 'السبب',
+      adjustmentNote: 'ملاحظة (اختياري)',
+      applyAdjustment: 'تطبيق التعديل',
+      applyingAdjustment: 'جارٍ التطبيق...',
+      reasonAdjustment: 'تعديل عام',
+      reasonWaste: 'هدر / تلف',
+      reasonCorrection: 'تصحيح جرد',
+      reasonSale: 'بيع',
+      recentMovements: 'آخر الحركات',
+      refreshHistory: 'تحديث السجل',
+      loadingHistory: 'جارٍ تحميل السجل...',
+      noMovements: 'لا توجد حركات بعد',
+      byUser: 'بواسطة',
+      orderRef: 'الطلب',
+      prefillRule: 'إنشاء قاعدة',
+      prefillRuleSuccess: 'تم تجهيز نموذج القاعدة لهذا العنصر.',
+      noActiveInventoryHint: 'أضف أو فعّل عنصر مخزون أولًا.',
       addInventoryItem: 'إضافة عنصر مخزون',
       type: 'النوع',
       bean: 'بن',
@@ -187,6 +308,7 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
   const [submittingCreate, setSubmittingCreate] = useState(false);
   const [submittingRule, setSubmittingRule] = useState(false);
   const [restockingId, setRestockingId] = useState<string | null>(null);
+  const [adjustingItemId, setAdjustingItemId] = useState<string | null>(null);
   const [savingItemId, setSavingItemId] = useState<string | null>(null);
   const [savingRuleId, setSavingRuleId] = useState<number | null>(null);
   const [deletingRuleId, setDeletingRuleId] = useState<number | null>(null);
@@ -224,6 +346,18 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
   });
 
   const [customRestockQtyById, setCustomRestockQtyById] = useState<Record<string, string>>({});
+  const [itemSearch, setItemSearch] = useState('');
+  const [itemFilter, setItemFilter] = useState<'all' | 'low' | 'active' | 'inactive'>('all');
+  const [itemSort, setItemSort] = useState<'name' | 'updated' | 'stock-asc' | 'stock-desc' | 'threshold-desc'>('name');
+  const [ruleSearch, setRuleSearch] = useState('');
+  const [ruleCategoryFilter, setRuleCategoryFilter] = useState('all');
+  const [ruleSort, setRuleSort] = useState<'menu' | 'inventory' | 'updated'>('menu');
+  const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
+  const [movementsByItemId, setMovementsByItemId] = useState<Record<string, InventoryMovement[]>>({});
+  const [loadingMovementsByItemId, setLoadingMovementsByItemId] = useState<Record<string, boolean>>({});
+  const [adjustmentDraftById, setAdjustmentDraftById] = useState<
+    Record<string, { qtyDelta: string; reason: 'adjustment' | 'waste' | 'correction'; note: string }>
+  >({});
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editingItemDraft, setEditingItemDraft] = useState<{
     nameEn: string;
@@ -246,6 +380,7 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
     }),
     [sessionToken]
   );
+  const ruleFormRef = useRef<HTMLFormElement | null>(null);
 
   const setFlash = (message: string) => {
     setSuccessMessage(message);
@@ -296,19 +431,91 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
     return m;
   }, [inventoryItems]);
 
-  const beanItems = useMemo(
-    () => inventoryItems.filter((item) => item.type === 'bean'),
-    [inventoryItems]
-  );
-  const sweetItems = useMemo(
-    () => inventoryItems.filter((item) => item.type === 'sweet'),
-    [inventoryItems]
-  );
-
   const availableInventoryItems = useMemo(
     () => inventoryItems.filter((item) => item.active),
     [inventoryItems]
   );
+  const ruleCategories = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          usageRules
+            .map((rule) => rule.menuItem.category || '')
+            .filter(Boolean)
+        )
+      ).sort((a, b) => a.localeCompare(b)),
+    [usageRules]
+  );
+  const filteredInventoryItems = useMemo(() => {
+    const query = itemSearch.trim().toLowerCase();
+    const filtered = inventoryItems.filter((item) => {
+      const matchesQuery =
+        !query ||
+        item.nameEn.toLowerCase().includes(query) ||
+        item.nameAr.toLowerCase().includes(query) ||
+        item.id.toLowerCase().includes(query) ||
+        (item.notes || '').toLowerCase().includes(query);
+      const matchesFilter =
+        itemFilter === 'all' ||
+        (itemFilter === 'low' && item.isLowStock) ||
+        (itemFilter === 'active' && item.active) ||
+        (itemFilter === 'inactive' && !item.active);
+      return matchesQuery && matchesFilter;
+    });
+
+    const sorted = [...filtered];
+    sorted.sort((a, b) => {
+      if (itemSort === 'updated') return Number(b.updatedAt || 0) - Number(a.updatedAt || 0);
+      if (itemSort === 'stock-asc') return Number(a.stockQty || 0) - Number(b.stockQty || 0);
+      if (itemSort === 'stock-desc') return Number(b.stockQty || 0) - Number(a.stockQty || 0);
+      if (itemSort === 'threshold-desc') {
+        return Number(b.lowStockThreshold || 0) - Number(a.lowStockThreshold || 0);
+      }
+      return (a.nameEn || a.nameAr).localeCompare(b.nameEn || b.nameAr, undefined, { sensitivity: 'base' });
+    });
+    return sorted;
+  }, [inventoryItems, itemFilter, itemSearch, itemSort]);
+  const filteredBeanItems = useMemo(
+    () => filteredInventoryItems.filter((item) => item.type === 'bean'),
+    [filteredInventoryItems]
+  );
+  const filteredSweetItems = useMemo(
+    () => filteredInventoryItems.filter((item) => item.type === 'sweet'),
+    [filteredInventoryItems]
+  );
+  const filteredUsageRules = useMemo(() => {
+    const query = ruleSearch.trim().toLowerCase();
+    const filtered = usageRules.filter((rule) => {
+      const category = rule.menuItem.category || '';
+      const matchesCategory = ruleCategoryFilter === 'all' || category === ruleCategoryFilter;
+      const matchesQuery =
+        !query ||
+        rule.menuItem.nameEn.toLowerCase().includes(query) ||
+        rule.menuItem.nameAr.toLowerCase().includes(query) ||
+        rule.inventoryItem.nameEn.toLowerCase().includes(query) ||
+        rule.inventoryItem.nameAr.toLowerCase().includes(query) ||
+        category.toLowerCase().includes(query);
+      return matchesCategory && matchesQuery;
+    });
+
+    const sorted = [...filtered];
+    sorted.sort((a, b) => {
+      if (ruleSort === 'updated') return Number(b.updatedAt || 0) - Number(a.updatedAt || 0);
+      if (ruleSort === 'inventory') {
+        return (a.inventoryItem.nameEn || a.inventoryItem.nameAr).localeCompare(
+          b.inventoryItem.nameEn || b.inventoryItem.nameAr,
+          undefined,
+          { sensitivity: 'base' }
+        );
+      }
+      return (a.menuItem.nameEn || a.menuItem.nameAr).localeCompare(
+        b.menuItem.nameEn || b.menuItem.nameAr,
+        undefined,
+        { sensitivity: 'base' }
+      );
+    });
+    return sorted;
+  }, [ruleCategoryFilter, ruleSearch, ruleSort, usageRules]);
 
   useEffect(() => {
     if (!newRule.menuItemId && menuItems[0]) {
@@ -326,6 +533,124 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
       }));
     }
   }, [availableInventoryItems, newRule.inventoryItemId]);
+
+  const loadItemMovements = async (itemId: string, { force = false }: { force?: boolean } = {}) => {
+    if (!force && movementsByItemId[itemId]) return;
+    setLoadingMovementsByItemId((prev) => ({ ...prev, [itemId]: true }));
+    try {
+      const res = await fetch(
+        `${apiBaseUrl}/admin/inventory/item/${encodeURIComponent(itemId)}/movements?limit=8`,
+        {
+          headers: { Authorization: `Bearer ${sessionToken}` },
+        }
+      );
+      const json = (await res.json()) as {
+        success?: boolean;
+        movements?: InventoryMovement[];
+        error?: string;
+      };
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Failed to load inventory movements');
+      }
+      setMovementsByItemId((prev) => ({
+        ...prev,
+        [itemId]: Array.isArray(json.movements) ? json.movements : [],
+      }));
+    } catch (e) {
+      console.error('Failed to load inventory movements', e);
+      setError(e instanceof Error ? e.message : 'Failed to load inventory movements');
+    } finally {
+      setLoadingMovementsByItemId((prev) => ({ ...prev, [itemId]: false }));
+    }
+  };
+
+  const toggleManageItem = (itemId: string) => {
+    setExpandedItemId((prev) => {
+      const nextId = prev === itemId ? null : itemId;
+      if (nextId) {
+        window.setTimeout(() => {
+          loadItemMovements(itemId);
+        }, 0);
+      }
+      return nextId;
+    });
+  };
+
+  const getAdjustmentDraft = (item: InventoryItemRow) =>
+    adjustmentDraftById[item.id] || {
+      qtyDelta: '',
+      reason: 'adjustment' as const,
+      note: '',
+    };
+
+  const handlePrefillRule = (menuItemId: string) => {
+    if (availableInventoryItems.length === 0) {
+      setError(t.noActiveInventoryHint);
+      return;
+    }
+    const selectedInventory =
+      availableInventoryItems.find((inventoryItem) => inventoryItem.id === newRule.inventoryItemId) ||
+      availableInventoryItems[0];
+    setError('');
+    setNewRule((prev) => ({
+      ...prev,
+      menuItemId,
+      inventoryItemId: selectedInventory.id,
+      consumeQty: selectedInventory.unit === 'pcs' ? '1' : prev.consumeQty || '20',
+    }));
+    setFlash(t.prefillRuleSuccess);
+    window.requestAnimationFrame(() => {
+      ruleFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
+  const handleAdjustInventory = async (item: InventoryItemRow) => {
+    const draft = getAdjustmentDraft(item);
+    const qtyDelta = Number(draft.qtyDelta);
+    if (!Number.isFinite(qtyDelta) || qtyDelta === 0) {
+      setError('qtyDelta must be a non-zero number');
+      return;
+    }
+    if (item.unit === 'pcs' && !Number.isInteger(qtyDelta)) {
+      setError('qtyDelta must be a whole number for pcs items');
+      return;
+    }
+
+    setAdjustingItemId(item.id);
+    setError('');
+    setSuccessMessage('');
+    try {
+      const res = await fetch(`${apiBaseUrl}/admin/inventory/item/${encodeURIComponent(item.id)}/adjust`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          qtyDelta,
+          reason: draft.reason,
+          note: draft.note.trim() || null,
+        }),
+      });
+      const json = (await res.json()) as { success?: boolean; error?: string };
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Failed to adjust inventory item');
+      }
+      setFlash(t.saved);
+      setAdjustmentDraftById((prev) => ({
+        ...prev,
+        [item.id]: {
+          qtyDelta: '',
+          reason: 'adjustment',
+          note: '',
+        },
+      }));
+      await loadInventorySummary({ silent: true });
+      await loadItemMovements(item.id, { force: true });
+    } catch (e) {
+      console.error('Failed to adjust inventory item', e);
+      setError(e instanceof Error ? e.message : 'Failed to adjust inventory item');
+    } finally {
+      setAdjustingItemId(null);
+    }
+  };
 
   const handleCreateInventoryItem = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -389,6 +714,7 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
       if (!res.ok || !json.success) throw new Error(json.error || 'Failed to restock inventory item');
       setFlash(t.saved);
       await loadInventorySummary({ silent: true });
+      await loadItemMovements(item.id, { force: true });
       if (item.unit === 'pcs') {
         setCustomRestockQtyById((prev) => ({ ...prev, [item.id]: '' }));
       }
@@ -578,6 +904,71 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
     }
   };
 
+  const formatMovementReason = (reason: string) => {
+    if (reason === 'restock') return t.restock;
+    if (reason === 'adjustment') return t.reasonAdjustment;
+    if (reason === 'waste') return t.reasonWaste;
+    if (reason === 'correction') return t.reasonCorrection;
+    if (reason === 'sale') return t.reasonSale;
+    return reason;
+  };
+
+  const renderMovementHistory = (item: InventoryItemRow) => {
+    const loadingMovements = Boolean(loadingMovementsByItemId[item.id]);
+    const movements = movementsByItemId[item.id] || [];
+    return (
+      <div className="border border-[var(--matte-black)] bg-[#fafafa]">
+        <div className="px-3 py-2 border-b border-[var(--matte-black)] flex items-center justify-between gap-2">
+          <div className="text-sm text-[var(--matte-black)] inline-flex items-center gap-2">
+            <History size={14} />
+            {t.recentMovements}
+          </div>
+          <button
+            type="button"
+            onClick={() => loadItemMovements(item.id, { force: true })}
+            disabled={loadingMovements}
+            className="px-2 py-1 border border-[var(--matte-black)] text-xs hover:bg-[var(--cool-gray)] disabled:opacity-60"
+          >
+            {t.refreshHistory}
+          </button>
+        </div>
+        <div className="p-3 space-y-2">
+          {loadingMovements ? (
+            <div className="text-xs text-[var(--matte-black)] opacity-70">{t.loadingHistory}</div>
+          ) : movements.length === 0 ? (
+            <div className="text-xs text-[var(--matte-black)] opacity-70">{t.noMovements}</div>
+          ) : (
+            movements.map((movement) => {
+              const delta = movement.direction === 'out' ? -Number(movement.qty || 0) : Number(movement.qty || 0);
+              return (
+                <div
+                  key={movement.id}
+                  className="border border-[var(--matte-black)] bg-[var(--crisp-white)] px-3 py-2 text-xs text-[var(--matte-black)]"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className={delta < 0 ? 'text-red-700' : 'text-emerald-700'}>
+                      {delta < 0 ? '-' : '+'}
+                      {formatQty(Math.abs(delta), item.unit)} {item.unit}
+                    </div>
+                    <div className="opacity-70">
+                      {formatDateTime(movement.createdAt, language === 'ar' ? 'ar-SA' : 'en-US')}
+                    </div>
+                  </div>
+                  <div className="mt-1 opacity-80">
+                    {formatMovementReason(movement.reason)}
+                    {movement.createdByName ? ` • ${t.byUser}: ${movement.createdByName}` : ''}
+                    {movement.orderId ? ` • ${t.orderRef}: ${movement.orderId}` : ''}
+                  </div>
+                  {movement.note && <div className="mt-1 opacity-70">{movement.note}</div>}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const renderInventoryGroup = (groupTitle: string, items: InventoryItemRow[]) => (
     <div className="border-2 border-[var(--matte-black)] bg-[var(--crisp-white)]">
       <div className="px-4 py-3 border-b-2 border-[var(--matte-black)] flex items-center justify-between">
@@ -592,190 +983,302 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
           {items.map((item) => {
             const customQty = customRestockQtyById[item.id] ?? '';
             const isEditingItem = editingItemId === item.id && editingItemDraft != null;
+            const isExpanded = expandedItemId === item.id;
+            const adjustmentDraft = getAdjustmentDraft(item);
             return (
-              <div key={item.id} className="p-4 grid grid-cols-1 xl:grid-cols-[1.2fr_1fr_1.4fr] gap-4">
-                <div>
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      {!isEditingItem ? (
-                        <>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <div className="text-base text-[var(--matte-black)]">
-                              {language === 'ar' ? item.nameAr || item.nameEn : item.nameEn || item.nameAr}
-                            </div>
-                            <span
-                              className={`text-[10px] px-2 py-0.5 border rounded-full ${
-                                item.active
-                                  ? 'border-[var(--matte-black)] text-[var(--matte-black)]'
-                                  : 'border-red-700 text-red-700'
-                              }`}
-                            >
-                              {item.active ? t.active : t.inactive}
-                            </span>
-                            {item.isLowStock && (
-                              <span className="text-[10px] px-2 py-0.5 border border-amber-700 text-amber-800 rounded-full">
-                                {t.lowStock}
+              <div key={item.id} className="p-4 space-y-4">
+                <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_1fr_1.4fr] gap-4">
+                  <div>
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        {!isEditingItem ? (
+                          <>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="text-base text-[var(--matte-black)]">
+                                {language === 'ar' ? item.nameAr || item.nameEn : item.nameEn || item.nameAr}
+                              </div>
+                              <span
+                                className={`text-[10px] px-2 py-0.5 border rounded-full ${
+                                  item.active
+                                    ? 'border-[var(--matte-black)] text-[var(--matte-black)]'
+                                    : 'border-red-700 text-red-700'
+                                }`}
+                              >
+                                {item.active ? t.active : t.inactive}
                               </span>
+                              {item.isLowStock && (
+                                <span className="text-[10px] px-2 py-0.5 border border-amber-700 text-amber-800 rounded-full">
+                                  {t.lowStock}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-[var(--matte-black)] opacity-70 mt-1 break-all">
+                              {t.id}: <code>{item.id}</code>
+                            </div>
+                            {item.notes && (
+                              <div className="text-xs text-[var(--matte-black)] opacity-80 mt-2">{item.notes}</div>
                             )}
-                          </div>
-                          <div className="text-xs text-[var(--matte-black)] opacity-70 mt-1 break-all">
-                            {t.id}: <code>{item.id}</code>
-                          </div>
-                          {item.notes && (
-                            <div className="text-xs text-[var(--matte-black)] opacity-80 mt-2">{item.notes}</div>
-                          )}
-                        </>
-                      ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <input
-                            value={editingItemDraft.nameEn}
-                            onChange={(e) =>
-                              setEditingItemDraft((prev) =>
-                                prev ? { ...prev, nameEn: e.target.value } : prev
-                              )
-                            }
-                            className="px-2 py-2 border-2 border-[var(--matte-black)] text-sm bg-[var(--crisp-white)]"
-                            placeholder={t.nameEn}
-                          />
-                          <input
-                            value={editingItemDraft.nameAr}
-                            onChange={(e) =>
-                              setEditingItemDraft((prev) =>
-                                prev ? { ...prev, nameAr: e.target.value } : prev
-                              )
-                            }
-                            className="px-2 py-2 border-2 border-[var(--matte-black)] text-sm bg-[var(--crisp-white)]"
-                            placeholder={t.nameAr}
-                          />
-                          <input
-                            type="number"
-                            min={0}
-                            step={item.unit === 'pcs' ? 1 : 0.01}
-                            value={editingItemDraft.lowStockThreshold}
-                            onChange={(e) =>
-                              setEditingItemDraft((prev) =>
-                                prev ? { ...prev, lowStockThreshold: e.target.value } : prev
-                              )
-                            }
-                            className="px-2 py-2 border-2 border-[var(--matte-black)] text-sm bg-[var(--crisp-white)]"
-                            placeholder={`${t.threshold} (${item.unit})`}
-                          />
-                          <label className="px-2 py-2 border-2 border-[var(--matte-black)] text-sm flex items-center gap-2">
+                          </>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             <input
-                              type="checkbox"
-                              checked={editingItemDraft.active}
+                              value={editingItemDraft.nameEn}
                               onChange={(e) =>
                                 setEditingItemDraft((prev) =>
-                                  prev ? { ...prev, active: e.target.checked } : prev
+                                  prev ? { ...prev, nameEn: e.target.value } : prev
                                 )
                               }
+                              className="px-2 py-2 border-2 border-[var(--matte-black)] text-sm bg-[var(--crisp-white)]"
+                              placeholder={t.nameEn}
                             />
-                            <span>
-                              {t.status}: {editingItemDraft.active ? t.active : t.inactive}
-                            </span>
-                          </label>
-                          <input
-                            value={editingItemDraft.notes}
-                            onChange={(e) =>
-                              setEditingItemDraft((prev) =>
-                                prev ? { ...prev, notes: e.target.value } : prev
-                              )
-                            }
-                            className="px-2 py-2 border-2 border-[var(--matte-black)] text-sm bg-[var(--crisp-white)] sm:col-span-2"
-                            placeholder={t.notes}
-                          />
-                        </div>
-                      )}
+                            <input
+                              value={editingItemDraft.nameAr}
+                              onChange={(e) =>
+                                setEditingItemDraft((prev) =>
+                                  prev ? { ...prev, nameAr: e.target.value } : prev
+                                )
+                              }
+                              className="px-2 py-2 border-2 border-[var(--matte-black)] text-sm bg-[var(--crisp-white)]"
+                              placeholder={t.nameAr}
+                            />
+                            <input
+                              type="number"
+                              min={0}
+                              step={item.unit === 'pcs' ? 1 : 0.01}
+                              value={editingItemDraft.lowStockThreshold}
+                              onChange={(e) =>
+                                setEditingItemDraft((prev) =>
+                                  prev ? { ...prev, lowStockThreshold: e.target.value } : prev
+                                )
+                              }
+                              className="px-2 py-2 border-2 border-[var(--matte-black)] text-sm bg-[var(--crisp-white)]"
+                              placeholder={`${t.threshold} (${item.unit})`}
+                            />
+                            <label className="px-2 py-2 border-2 border-[var(--matte-black)] text-sm flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={editingItemDraft.active}
+                                onChange={(e) =>
+                                  setEditingItemDraft((prev) =>
+                                    prev ? { ...prev, active: e.target.checked } : prev
+                                  )
+                                }
+                              />
+                              <span>
+                                {t.status}: {editingItemDraft.active ? t.active : t.inactive}
+                              </span>
+                            </label>
+                            <input
+                              value={editingItemDraft.notes}
+                              onChange={(e) =>
+                                setEditingItemDraft((prev) =>
+                                  prev ? { ...prev, notes: e.target.value } : prev
+                                )
+                              }
+                              className="px-2 py-2 border-2 border-[var(--matte-black)] text-sm bg-[var(--crisp-white)] sm:col-span-2"
+                              placeholder={t.notes}
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 shrink-0">
+                        {!isEditingItem ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => toggleManageItem(item.id)}
+                              className="px-2 py-1 border border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] inline-flex items-center gap-1 text-xs"
+                            >
+                              <Settings2 size={12} />
+                              {isExpanded ? t.close : t.manage}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => startEditItem(item)}
+                              className="px-2 py-1 border border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] inline-flex items-center gap-1 text-xs"
+                            >
+                              <Edit2 size={12} />
+                              {t.edit}
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => saveEditItem(item)}
+                              disabled={savingItemId === item.id}
+                              className="px-2 py-1 border border-emerald-700 text-emerald-700 hover:bg-emerald-700 hover:text-white disabled:opacity-60 inline-flex items-center gap-1 text-xs"
+                            >
+                              <Check size={12} />
+                              {savingItemId === item.id ? t.saving : t.save}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelEditItem}
+                              disabled={savingItemId === item.id}
+                              className="px-2 py-1 border border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--cool-gray)] disabled:opacity-60 inline-flex items-center gap-1 text-xs"
+                            >
+                              <X size={12} />
+                              {t.cancel}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-sm text-[var(--matte-black)] space-y-1">
+                    <div>
+                      {t.stock}: <strong>{formatQty(item.stockQty, item.unit)}</strong> {item.unit}
+                    </div>
+                    <div>
+                      {t.status}: {item.isLowStock ? t.lowStock : t.inStock}
+                    </div>
+                    <div>
+                      {t.threshold}: {formatQty(item.lowStockThreshold, item.unit)} {item.unit}
+                    </div>
+                    <div className="text-xs opacity-70">{t.thresholdHint}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-[var(--matte-black)] opacity-70 mb-2">
+                      {t.restock}
                     </div>
 
-                    <div className="flex flex-wrap gap-2 shrink-0">
-                      {!isEditingItem ? (
+                    {item.type === 'bean' ? (
+                      <div className="flex flex-wrap gap-2">
+                        {beanRestockOptions.map((qty) => (
+                          <button
+                            key={`${item.id}-${qty}`}
+                            type="button"
+                            onClick={() => handleRestock(item, qty)}
+                            disabled={restockingId === item.id}
+                            className="px-3 py-2 border-2 border-[var(--matte-black)] text-sm hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] disabled:opacity-60"
+                          >
+                            +{qty}g
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={customQty}
+                          onChange={(e) =>
+                            setCustomRestockQtyById((prev) => ({ ...prev, [item.id]: e.target.value }))
+                          }
+                          placeholder={item.unit === 'pcs' ? '1' : '0'}
+                          className="w-28 px-2 py-2 border-2 border-[var(--matte-black)] text-sm bg-[var(--crisp-white)]"
+                        />
                         <button
                           type="button"
-                          onClick={() => startEditItem(item)}
-                          className="px-2 py-1 border border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] inline-flex items-center gap-1 text-xs"
-                        >
-                          <Edit2 size={12} />
-                          {t.edit}
-                        </button>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => saveEditItem(item)}
-                            disabled={savingItemId === item.id}
-                            className="px-2 py-1 border border-emerald-700 text-emerald-700 hover:bg-emerald-700 hover:text-white disabled:opacity-60 inline-flex items-center gap-1 text-xs"
-                          >
-                            <Check size={12} />
-                            {savingItemId === item.id ? t.saving : t.save}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={cancelEditItem}
-                            disabled={savingItemId === item.id}
-                            className="px-2 py-1 border border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--cool-gray)] disabled:opacity-60 inline-flex items-center gap-1 text-xs"
-                          >
-                            <X size={12} />
-                            {t.cancel}
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="text-sm text-[var(--matte-black)] space-y-1">
-                  <div>
-                    {t.stock}: <strong>{formatQty(item.stockQty, item.unit)}</strong> {item.unit}
-                  </div>
-                  <div>
-                    {t.threshold}: {formatQty(item.lowStockThreshold, item.unit)} {item.unit}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-xs uppercase tracking-wider text-[var(--matte-black)] opacity-70 mb-2">
-                    {t.restock}
-                  </div>
-
-                  {item.type === 'bean' ? (
-                    <div className="flex flex-wrap gap-2">
-                      {beanRestockOptions.map((qty) => (
-                        <button
-                          key={`${item.id}-${qty}`}
-                          type="button"
-                          onClick={() => handleRestock(item, qty)}
-                          disabled={restockingId === item.id}
+                          onClick={() => handleRestock(item, Number(customQty))}
+                          disabled={restockingId === item.id || !customQty}
                           className="px-3 py-2 border-2 border-[var(--matte-black)] text-sm hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] disabled:opacity-60"
                         >
-                          +{qty}g
+                          {t.applyRestock}
                         </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min={1}
-                        step={1}
-                        value={customQty}
-                        onChange={(e) =>
-                          setCustomRestockQtyById((prev) => ({ ...prev, [item.id]: e.target.value }))
-                        }
-                        placeholder={item.unit === 'pcs' ? '1' : '0'}
-                        className="w-28 px-2 py-2 border-2 border-[var(--matte-black)] text-sm bg-[var(--crisp-white)]"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleRestock(item, Number(customQty))}
-                        disabled={restockingId === item.id || !customQty}
-                        className="px-3 py-2 border-2 border-[var(--matte-black)] text-sm hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] disabled:opacity-60"
-                      >
-                        {t.applyRestock}
-                      </button>
-                    </div>
-                  )}
+                      </div>
+                    )}
+                  </div>
                 </div>
+
+                {isExpanded && !isEditingItem && (
+                  <div className="border border-[var(--matte-black)] bg-[#f6f2ea] p-4 space-y-4">
+                    <div className="text-sm text-[var(--matte-black)] inline-flex items-center gap-2">
+                      <Settings2 size={14} />
+                      {t.stockActions}
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_0.95fr] gap-4">
+                      <div className="space-y-3">
+                        <div className="border border-[var(--matte-black)] bg-[var(--crisp-white)] p-3">
+                          <div className="text-sm text-[var(--matte-black)] mb-2">{t.adjustmentTitle}</div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <label className="text-xs text-[var(--matte-black)]">
+                              <div className="mb-1">{t.adjustmentQty}</div>
+                              <input
+                                type="number"
+                                step={item.unit === 'pcs' ? 1 : 0.01}
+                                value={adjustmentDraft.qtyDelta}
+                                onChange={(e) =>
+                                  setAdjustmentDraftById((prev) => ({
+                                    ...prev,
+                                    [item.id]: {
+                                      ...getAdjustmentDraft(item),
+                                      qtyDelta: e.target.value,
+                                    },
+                                  }))
+                                }
+                                placeholder={item.unit === 'pcs' ? '-1 or 1' : '-50 or 50'}
+                                className="w-full px-2 py-2 border border-[var(--matte-black)] bg-[var(--crisp-white)]"
+                              />
+                            </label>
+                            <label className="text-xs text-[var(--matte-black)]">
+                              <div className="mb-1">{t.adjustmentReason}</div>
+                              <select
+                                value={adjustmentDraft.reason}
+                                onChange={(e) =>
+                                  setAdjustmentDraftById((prev) => ({
+                                    ...prev,
+                                    [item.id]: {
+                                      ...getAdjustmentDraft(item),
+                                      reason:
+                                        e.target.value === 'waste'
+                                          ? 'waste'
+                                          : e.target.value === 'correction'
+                                            ? 'correction'
+                                            : 'adjustment',
+                                    },
+                                  }))
+                                }
+                                className="w-full px-2 py-2 border border-[var(--matte-black)] bg-[var(--crisp-white)]"
+                              >
+                                <option value="adjustment">{t.reasonAdjustment}</option>
+                                <option value="waste">{t.reasonWaste}</option>
+                                <option value="correction">{t.reasonCorrection}</option>
+                              </select>
+                            </label>
+                            <label className="text-xs text-[var(--matte-black)] md:col-span-2">
+                              <div className="mb-1">{t.adjustmentNote}</div>
+                              <input
+                                value={adjustmentDraft.note}
+                                onChange={(e) =>
+                                  setAdjustmentDraftById((prev) => ({
+                                    ...prev,
+                                    [item.id]: {
+                                      ...getAdjustmentDraft(item),
+                                      note: e.target.value,
+                                    },
+                                  }))
+                                }
+                                className="w-full px-2 py-2 border border-[var(--matte-black)] bg-[var(--crisp-white)]"
+                              />
+                            </label>
+                          </div>
+                          <div className="text-xs text-[var(--matte-black)] opacity-70 mt-2">
+                            {t.adjustmentHelp}
+                          </div>
+                          <div className="mt-3">
+                            <button
+                              type="button"
+                              onClick={() => handleAdjustInventory(item)}
+                              disabled={adjustingItemId === item.id}
+                              className="px-3 py-2 border-2 border-[var(--matte-black)] bg-[var(--matte-black)] text-[var(--crisp-white)] text-sm hover:opacity-90 disabled:opacity-60"
+                            >
+                              {adjustingItemId === item.id ? t.applyingAdjustment : t.applyAdjustment}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {renderMovementHistory(item)}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -815,6 +1318,78 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
 
       <div className="border-2 border-[var(--matte-black)] bg-[var(--crisp-white)]">
         <div className="px-4 py-3 border-b-2 border-[var(--matte-black)] flex items-center justify-between gap-2">
+          <div className="text-base text-[var(--matte-black)] inline-flex items-center gap-2">
+            <Search size={16} />
+            {t.quickFilters}
+          </div>
+          <div className="text-xs text-[var(--matte-black)] opacity-70">
+            {t.showing} {filteredInventoryItems.length} {t.of} {inventoryItems.length}
+          </div>
+        </div>
+        <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <label className="text-sm text-[var(--matte-black)]">
+            <div className="mb-1">{t.searchItems}</div>
+            <input
+              value={itemSearch}
+              onChange={(e) => setItemSearch(e.target.value)}
+              placeholder={t.searchPlaceholder}
+              className="w-full px-3 py-2 border-2 border-[var(--matte-black)] bg-[var(--crisp-white)]"
+            />
+          </label>
+          <label className="text-sm text-[var(--matte-black)]">
+            <div className="mb-1">{t.filterBy}</div>
+            <select
+              value={itemFilter}
+              onChange={(e) =>
+                setItemFilter(
+                  e.target.value === 'low'
+                    ? 'low'
+                    : e.target.value === 'active'
+                      ? 'active'
+                      : e.target.value === 'inactive'
+                        ? 'inactive'
+                        : 'all'
+                )
+              }
+              className="w-full px-3 py-2 border-2 border-[var(--matte-black)] bg-[var(--crisp-white)]"
+            >
+              <option value="all">{t.showAll}</option>
+              <option value="low">{t.lowOnly}</option>
+              <option value="active">{t.activeOnly}</option>
+              <option value="inactive">{t.inactiveOnly}</option>
+            </select>
+          </label>
+          <label className="text-sm text-[var(--matte-black)]">
+            <div className="mb-1">{t.sortBy}</div>
+            <select
+              value={itemSort}
+              onChange={(e) =>
+                setItemSort(
+                  e.target.value === 'updated'
+                    ? 'updated'
+                    : e.target.value === 'stock-asc'
+                      ? 'stock-asc'
+                      : e.target.value === 'stock-desc'
+                        ? 'stock-desc'
+                        : e.target.value === 'threshold-desc'
+                          ? 'threshold-desc'
+                          : 'name'
+                )
+              }
+              className="w-full px-3 py-2 border-2 border-[var(--matte-black)] bg-[var(--crisp-white)]"
+            >
+              <option value="name">{t.nameAZ}</option>
+              <option value="updated">{t.updatedNewest}</option>
+              <option value="stock-asc">{t.stockLowHigh}</option>
+              <option value="stock-desc">{t.stockHighLow}</option>
+              <option value="threshold-desc">{t.thresholdHighLow}</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div className="border-2 border-[var(--matte-black)] bg-[var(--crisp-white)]">
+        <div className="px-4 py-3 border-b-2 border-[var(--matte-black)] flex items-center justify-between gap-2">
           <div className="text-base text-[var(--matte-black)]">{t.unlinkedWarningTitle}</div>
           <div
             className={`text-xs px-2 py-1 border rounded-full ${
@@ -844,6 +1419,13 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
                     {t.category}: {item.category || '-'} •{' '}
                     {item.available ? t.available : t.unavailable}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => handlePrefillRule(item.id)}
+                    className="mt-3 px-2 py-1 border border-[var(--matte-black)] text-xs hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)]"
+                  >
+                    {t.prefillRule}
+                  </button>
                 </div>
               ))}
               {unlinkedMenuItems.length > 18 && (
@@ -946,6 +1528,7 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
           </form>
 
           <form
+            ref={ruleFormRef}
             onSubmit={handleCreateRule}
             className="border-2 border-[var(--matte-black)] bg-[var(--crisp-white)]"
           >
@@ -1025,25 +1608,74 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
         </div>
 
         <div className="space-y-6">
-          {renderInventoryGroup(t.beans, beanItems)}
-          {renderInventoryGroup(t.sweets, sweetItems)}
+          {renderInventoryGroup(t.beans, filteredBeanItems)}
+          {renderInventoryGroup(t.sweets, filteredSweetItems)}
         </div>
       </div>
 
       <div className="border-2 border-[var(--matte-black)] bg-[var(--crisp-white)]">
         <div className="px-4 py-3 border-b-2 border-[var(--matte-black)] flex items-center justify-between">
           <h3 className="text-lg text-[var(--matte-black)]">{t.linkedRules}</h3>
-          <span className="text-xs text-[var(--matte-black)] opacity-70">{usageRules.length}</span>
+          <span className="text-xs text-[var(--matte-black)] opacity-70">
+            {filteredUsageRules.length} / {usageRules.length}
+          </span>
+        </div>
+
+        <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3 border-b border-[var(--matte-black)]">
+          <label className="text-sm text-[var(--matte-black)]">
+            <div className="mb-1">{t.rulesSearch}</div>
+            <input
+              value={ruleSearch}
+              onChange={(e) => setRuleSearch(e.target.value)}
+              placeholder={t.searchPlaceholder}
+              className="w-full px-3 py-2 border-2 border-[var(--matte-black)] bg-[var(--crisp-white)]"
+            />
+          </label>
+          <label className="text-sm text-[var(--matte-black)]">
+            <div className="mb-1">{t.category}</div>
+            <select
+              value={ruleCategoryFilter}
+              onChange={(e) => setRuleCategoryFilter(e.target.value)}
+              className="w-full px-3 py-2 border-2 border-[var(--matte-black)] bg-[var(--crisp-white)]"
+            >
+              <option value="all">{t.allCategories}</option>
+              {ruleCategories.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm text-[var(--matte-black)]">
+            <div className="mb-1">{t.sortBy}</div>
+            <select
+              value={ruleSort}
+              onChange={(e) =>
+                setRuleSort(
+                  e.target.value === 'inventory'
+                    ? 'inventory'
+                    : e.target.value === 'updated'
+                      ? 'updated'
+                      : 'menu'
+                )
+              }
+              className="w-full px-3 py-2 border-2 border-[var(--matte-black)] bg-[var(--crisp-white)]"
+            >
+              <option value="menu">{t.menuAZ}</option>
+              <option value="inventory">{t.inventoryAZ}</option>
+              <option value="updated">{t.recentlyChanged}</option>
+            </select>
+          </label>
         </div>
 
         {loading ? (
           <div className="p-4 text-sm text-[var(--matte-black)] opacity-70">{t.loading}</div>
-        ) : usageRules.length === 0 ? (
+        ) : filteredUsageRules.length === 0 ? (
           <div className="p-4 text-sm text-[var(--matte-black)] opacity-70">{t.noRules}</div>
         ) : (
           <>
             <div className="md:hidden divide-y divide-[var(--matte-black)]">
-              {usageRules.map((rule) => {
+              {filteredUsageRules.map((rule) => {
                 const isEditing = editingRuleId === rule.id && editingRuleDraft != null;
                 const selectedEditInventory = isEditing
                   ? inventoryItemsById.get(editingRuleDraft.inventoryItemId)
@@ -1181,7 +1813,7 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
                   </tr>
                 </thead>
                 <tbody>
-                  {usageRules.map((rule) => {
+                  {filteredUsageRules.map((rule) => {
                     const isEditing = editingRuleId === rule.id && editingRuleDraft != null;
                     const selectedEditInventory = isEditing
                       ? inventoryItemsById.get(editingRuleDraft.inventoryItemId)
