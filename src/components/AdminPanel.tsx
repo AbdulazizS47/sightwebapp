@@ -61,6 +61,7 @@ interface AdminPanelProps {
   embedded?: boolean;
   limitedControl?: boolean;
   ordersMode?: 'live' | 'history';
+  onOrdersChanged?: () => void | Promise<void>;
 }
 
 type Tab = 'orders' | 'menu';
@@ -74,6 +75,7 @@ export function AdminPanel({
   embedded,
   limitedControl,
   ordersMode,
+  onOrdersChanged,
 }: AdminPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>(initialTab ?? 'orders');
   const mode = ordersMode ?? 'live';
@@ -82,6 +84,7 @@ export function AdminPanel({
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
+  const [bulkCompleting, setBulkCompleting] = useState(false);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [showNewCategory, setShowNewCategory] = useState(false);
@@ -117,6 +120,14 @@ export function AdminPanel({
       startPreparing: 'Start Preparing',
       markReady: 'Mark Ready',
       markCompleted: 'Complete',
+      completeAllLiveOrders: 'Complete all live orders',
+      completeAllInProgress: 'Completing...',
+      completeAllConfirm:
+        'Complete every order that is live right now? Orders received after you confirm will remain live.',
+      completeAllSuccess: 'Completed {count} live orders.',
+      completeAllSuccessWithRemaining:
+        'Completed {count} live orders. {remaining} newer live orders remain.',
+      completeAllError: 'Failed to complete live orders',
       refresh: 'Refresh',
       filterAll: 'All',
       search: 'Search',
@@ -161,6 +172,14 @@ export function AdminPanel({
       startPreparing: 'بدء التحضير',
       markReady: 'وضع علامة جاهز',
       markCompleted: 'إكمال',
+      completeAllLiveOrders: 'إكمال جميع الطلبات المباشرة',
+      completeAllInProgress: 'جارٍ الإكمال...',
+      completeAllConfirm:
+        'هل تريد إكمال جميع الطلبات المباشرة الحالية؟ الطلبات الجديدة بعد التأكيد ستبقى مباشرة.',
+      completeAllSuccess: 'تم إكمال {count} من الطلبات المباشرة.',
+      completeAllSuccessWithRemaining:
+        'تم إكمال {count} من الطلبات المباشرة. تبقّى {remaining} من الطلبات المباشرة الأحدث.',
+      completeAllError: 'تعذّر إكمال الطلبات المباشرة',
       refresh: 'تحديث',
       filterAll: 'الكل',
       search: 'بحث',
@@ -240,11 +259,12 @@ export function AdminPanel({
 
   useEffect(() => {
     if (activeTab !== 'orders' || mode !== 'live') return;
+    if (bulkCompleting) return;
     const t = setInterval(() => {
       loadOrders({ silent: true });
     }, 10000);
     return () => clearInterval(t);
-  }, [activeTab, mode]);
+  }, [activeTab, mode, bulkCompleting]);
 
   const loadOrders = async ({ silent }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true);
@@ -351,6 +371,9 @@ export function AdminPanel({
         setOrders((prev) =>
           prev.map((order) => (order.id === orderId ? { ...order, status } : order))
         );
+        if (onOrdersChanged) {
+          await onOrdersChanged();
+        }
       }
     } catch (error) {
       console.error('Error updating order:', error);
@@ -367,6 +390,53 @@ export function AdminPanel({
   const liveOrders = orders
     .filter((o) => o.status !== 'completed')
     .sort((a, b) => a.createdAt - b.createdAt);
+
+  const formatCountMessage = (template: string, count: number, remaining?: number) =>
+    template
+      .replace('{count}', String(count))
+      .replace('{remaining}', String(remaining ?? 0));
+
+  const handleCompleteAllLiveOrders = async () => {
+    if (bulkCompleting || liveOrders.length === 0) return;
+
+    const confirmed = window.confirm(
+      `${text.completeAllLiveOrders} (${liveOrders.length})\n\n${text.completeAllConfirm}`
+    );
+    if (!confirmed) return;
+
+    setBulkCompleting(true);
+    try {
+      const response = await fetch(`${apiBaseUrl}/admin/orders/complete-all`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+        },
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.error || text.completeAllError);
+      }
+
+      await loadOrders();
+      if (onOrdersChanged) {
+        await onOrdersChanged();
+      }
+
+      const completedCount = Number(data.completedCount || 0);
+      const remainingLive = Number(data.remainingLive || 0);
+      alert(
+        remainingLive > 0
+          ? formatCountMessage(text.completeAllSuccessWithRemaining, completedCount, remainingLive)
+          : formatCountMessage(text.completeAllSuccess, completedCount)
+      );
+    } catch (error) {
+      console.error('Error completing all live orders:', error);
+      alert(error instanceof Error ? error.message : text.completeAllError);
+    } finally {
+      setBulkCompleting(false);
+    }
+  };
 
   const loadMenu = async () => {
     setLoading(true);
@@ -815,13 +885,26 @@ export function AdminPanel({
                 <div className="text-xs text-[var(--matte-black)] opacity-60">
                   auto-refresh 10s
                 </div>
-                <button
-                  onClick={() => loadOrders()}
-                  disabled={loading}
-                  className="px-3 py-1.5 border-2 border-[var(--matte-black)] text-xs hover:bg-[var(--cool-gray)] transition-colors disabled:opacity-60"
-                >
-                  {text.refresh}
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => {
+                      void handleCompleteAllLiveOrders();
+                    }}
+                    disabled={loading || bulkCompleting || liveOrders.length === 0}
+                    className="px-3 py-1.5 border-2 border-[var(--matte-black)] text-xs hover:bg-[var(--cool-gray)] transition-colors disabled:opacity-60"
+                  >
+                    {bulkCompleting
+                      ? text.completeAllInProgress
+                      : `${text.completeAllLiveOrders} (${liveOrders.length})`}
+                  </button>
+                  <button
+                    onClick={() => loadOrders()}
+                    disabled={loading || bulkCompleting}
+                    className="px-3 py-1.5 border-2 border-[var(--matte-black)] text-xs hover:bg-[var(--cool-gray)] transition-colors disabled:opacity-60"
+                  >
+                    {text.refresh}
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="flex flex-wrap items-center justify-between gap-3 border-2 border-[var(--matte-black)] p-3 bg-[var(--crisp-white)]">
@@ -967,10 +1050,10 @@ export function AdminPanel({
                           {nextAction && (
                             <button
                               onClick={() => updateOrderStatus(order.id, nextAction.nextStatus)}
-                              disabled={updating === order.id}
+                              disabled={updating === order.id || bulkCompleting}
                               className="w-full mt-3 py-2 px-4 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors disabled:opacity-50 text-sm"
                             >
-                              {updating === order.id ? '...' : nextAction.label}
+                              {updating === order.id || bulkCompleting ? '...' : nextAction.label}
                             </button>
                           )}
                         </div>

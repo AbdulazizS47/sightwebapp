@@ -14,6 +14,7 @@ const app = new Hono();
 const printApi = new Hono();
 const NODE_ENV = (process.env.NODE_ENV || 'development').trim().toLowerCase();
 const IS_PRODUCTION = NODE_ENV === 'production';
+const ORDER_FINALIZATION_LOCK_NAME = 'sight:orders:finalize';
 
 app.use(
   '*',
@@ -770,6 +771,23 @@ async function setSetting(key, value) {
     'INSERT INTO app_settings (`key`, `value`, updatedAt) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE `value`=VALUES(`value`), updatedAt=VALUES(updatedAt)',
     [key, String(value), Date.now()]
   );
+}
+
+async function acquireNamedLock(conn, lockName, timeoutSeconds = 10) {
+  const [rows] = await conn.query('SELECT GET_LOCK(?, ?) AS lockAcquired', [
+    lockName,
+    Math.max(Number(timeoutSeconds) || 0, 0),
+  ]);
+  const row = Array.isArray(rows) && rows[0] ? rows[0] : null;
+  return Number(row?.lockAcquired ?? 0) === 1;
+}
+
+async function releaseNamedLock(conn, lockName) {
+  try {
+    await conn.query('SELECT RELEASE_LOCK(?) AS lockReleased', [lockName]);
+  } catch (e) {
+    console.error('Failed to release named lock', lockName, e);
+  }
 }
 
 const INVENTORY_TYPES = new Set(['bean', 'sweet']);
@@ -2341,6 +2359,7 @@ app.post('/api/orders/create', async (c) => {
 
     const conn = await pool.getConnection();
     let txOpen = false;
+    let finalizationLockHeld = false;
     try {
       await conn.beginTransaction();
       txOpen = true;
@@ -2466,6 +2485,13 @@ app.post('/api/orders/create', async (c) => {
         }
       }
 
+      if (!(await acquireNamedLock(conn, ORDER_FINALIZATION_LOCK_NAME, 15))) {
+        await conn.rollback();
+        txOpen = false;
+        return c.json({ error: 'Order queue is busy. Please try again.' }, 503);
+      }
+      finalizationLockHeld = true;
+
       const [counterRes] = await conn.execute(
         'INSERT INTO order_counters (dateKey, currentNumber) VALUES (?, 1) ON DUPLICATE KEY UPDATE currentNumber = LAST_INSERT_ID(currentNumber + 1)',
         [dateKey]
@@ -2550,6 +2576,9 @@ app.post('/api/orders/create', async (c) => {
       }
       throw txError;
     } finally {
+      if (finalizationLockHeld) {
+        await releaseNamedLock(conn, ORDER_FINALIZATION_LOCK_NAME);
+      }
       conn.release();
     }
 
@@ -3097,8 +3126,7 @@ app.get('/api/admin/orders/stats', async (c) => {
     const dateKey = await getCurrentDateKey();
 
     const [liveRows] = await pool.execute(
-      'SELECT COUNT(*) AS count FROM orders WHERE status != ?',
-      ['completed']
+      'SELECT COUNT(*) AS count FROM orders WHERE completedAt IS NULL'
     );
     const liveTotal = Number(liveRows?.[0]?.count || 0);
 
@@ -3123,6 +3151,48 @@ app.get('/api/admin/orders/stats', async (c) => {
   } catch (e) {
     console.error('Error fetching order stats', e);
     return c.json({ error: 'Failed to fetch order stats' }, 500);
+  }
+});
+
+app.post('/api/admin/orders/complete-all', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+
+  const conn = await pool.getConnection();
+  let finalizationLockHeld = false;
+  try {
+    if (!(await acquireNamedLock(conn, ORDER_FINALIZATION_LOCK_NAME, 30))) {
+      return c.json({ error: 'Order queue is busy. Please try again.' }, 503);
+    }
+    finalizationLockHeld = true;
+
+    const cutoffCreatedAt = Date.now();
+    const completedAt = Date.now();
+    const [updateResult] = await conn.execute(
+      'UPDATE orders SET status=?, completedAt=? WHERE completedAt IS NULL AND createdAt <= ?',
+      ['completed', completedAt, cutoffCreatedAt]
+    );
+    const completedCount = Number(updateResult?.affectedRows || 0);
+
+    const [remainingRows] = await conn.execute(
+      'SELECT COUNT(*) AS count FROM orders WHERE completedAt IS NULL'
+    );
+    const remainingLive = Number(remainingRows?.[0]?.count || 0);
+
+    return c.json({
+      success: true,
+      completedCount,
+      remainingLive,
+      cutoffCreatedAt,
+    });
+  } catch (e) {
+    console.error('Error completing all live orders', e);
+    return c.json({ error: 'Failed to complete live orders' }, 500);
+  } finally {
+    if (finalizationLockHeld) {
+      await releaseNamedLock(conn, ORDER_FINALIZATION_LOCK_NAME);
+    }
+    conn.release();
   }
 });
 

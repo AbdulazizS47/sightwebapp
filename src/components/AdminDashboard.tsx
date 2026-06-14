@@ -434,6 +434,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
             embedded={true}
             limitedControl={true}
             ordersMode="live"
+            onOrdersChanged={loadStats}
           />
         )}
         {activeTab === 'history' && (
@@ -445,6 +446,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
             embedded={true}
             limitedControl={true}
             ordersMode="history"
+            onOrdersChanged={loadStats}
           />
         )}
         {activeTab === 'menu' && (
