@@ -1,4 +1,4 @@
-import { ArrowLeft, Instagram, Mail, MapPin } from 'lucide-react';
+import { ArrowLeft, Instagram, MapPin, MessageCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiBaseUrl } from '../utils/api';
 
@@ -16,11 +16,12 @@ export function ContactPage({ onBack, language }: ContactPageProps) {
       title: 'Contact Us',
       subtitle: 'Get in touch with our team',
       instagram: 'Instagram',
-      email: 'Email',
+      whatsapp: 'WhatsApp',
       location: 'Location',
       instagramHandle: 'sightcafee',
       instagramUrl: 'https://www.instagram.com/sightcafee/',
-      emailAddress: 'outofsight.co@outlook.com',
+      whatsappLabel: 'Message us directly',
+      whatsappUrl: 'https://wa.me/message/XSELOLSOUUHPM1',
       address: 'Al Hofuf, Saudi Arabia',
       locationUrl: 'https://maps.app.goo.gl/XNoBCTw3PpgcMCrRA?g_st=ic',
       hours: 'Hours',
@@ -30,11 +31,12 @@ export function ContactPage({ onBack, language }: ContactPageProps) {
       title: 'اتصل بنا',
       subtitle: 'تواصل مع فريقنا',
       instagram: 'انستغرام',
-      email: 'البريد الإلكتروني',
+      whatsapp: 'واتساب',
       location: 'الموقع',
       instagramHandle: 'sightcafee',
       instagramUrl: 'https://www.instagram.com/sightcafee/',
-      emailAddress: 'outofsight.co@outlook.com',
+      whatsappLabel: 'راسلنا مباشرة',
+      whatsappUrl: 'https://wa.me/message/XSELOLSOUUHPM1',
       address: 'الحسا حساك لو الدهر .. ؟',
       locationUrl: 'https://maps.app.goo.gl/XNoBCTw3PpgcMCrRA?g_st=ic',
       hours: 'ساعات العمل',
@@ -98,18 +100,23 @@ export function ContactPage({ onBack, language }: ContactPageProps) {
             </div>
           </a>
 
-          {/* Email */}
-          <div className="p-6 bg-[var(--cool-gray)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] transition-colors group">
+          {/* WhatsApp */}
+          <a
+            className="block p-6 bg-[var(--cool-gray)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] transition-colors group"
+            href={text.whatsappUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
             <div className="flex items-start gap-4">
-              <Mail size={24} className="flex-shrink-0 mt-1" />
+              <MessageCircle size={24} className="flex-shrink-0 mt-1" />
               <div>
-                <h3 className="mb-2">{text.email}</h3>
+                <h3 className="mb-2">{text.whatsapp}</h3>
                 <p className="opacity-70" dir="ltr">
-                  {text.emailAddress}
+                  {text.whatsappLabel}
                 </p>
               </div>
             </div>
-          </div>
+          </a>
 
           {/* Location */}
           <a
