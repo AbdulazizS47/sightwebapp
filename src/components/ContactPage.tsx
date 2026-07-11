@@ -28,7 +28,7 @@ export function ContactPage({ onBack, language }: ContactPageProps) {
       hoursText: hoursEn,
     },
     ar: {
-      title: 'اتصل بنا',
+      title: 'تواصل معنا',
       subtitle: 'تواصل مع فريقنا',
       instagram: 'انستغرام',
       whatsapp: 'واتساب',

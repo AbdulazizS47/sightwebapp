@@ -44,7 +44,7 @@ export function LandingPage({ onNavigate, onAdminNavigate, isAdmin, language }: 
       ),
       viewMenu: 'القائمة',
       pickUp: 'طلب استلام',
-      contact: 'اتصل بنا',
+      contact: 'تواصل معنا',
       adminEdit: 'تعديل الأصناف',
       adminOrder: 'تسجيل الطلبات',
       openNow: 'مفتوح الآن',
