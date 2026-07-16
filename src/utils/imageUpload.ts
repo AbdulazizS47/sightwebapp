@@ -93,7 +93,7 @@ export const prepareImageUpload = async (file: File) => {
   }
 
   let bestBlob: Blob | null = null;
-  let bestType: (typeof OUTPUT_IMAGE_TYPES)[number] = 'image/webp';
+  let bestType: (typeof OUTPUT_IMAGE_TYPES)[number] = 'image/jpeg';
   let width = initialSize.width;
   let height = initialSize.height;
 

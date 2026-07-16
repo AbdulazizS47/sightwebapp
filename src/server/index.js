@@ -685,11 +685,131 @@ function isOpenForSchedule(now, start, end, timeZone) {
 
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
 
+function normalizePublicHttpUrl(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+
+  try {
+    const url = new URL(raw);
+    const isLocalHost =
+      url.hostname === 'localhost' ||
+      url.hostname === '127.0.0.1' ||
+      url.hostname === '::1' ||
+      url.hostname.endsWith('.local');
+    if (url.protocol === 'http:' && (IS_PRODUCTION || !isLocalHost)) {
+      url.protocol = 'https:';
+    }
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return raw.replace(/\/+$/, '');
+  }
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 5000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function ensureUploadsDir() {
   try {
     await fs.mkdir(UPLOADS_DIR, { recursive: true });
   } catch (e) {
     console.error('Failed to create uploads dir', e);
+  }
+}
+
+async function backfillLocalUploads() {
+  try {
+    const entries = await fs.readdir(UPLOADS_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || entry.name.startsWith('.')) continue;
+
+      const safeName = path.basename(entry.name);
+      const contentType = EXT_TO_IMAGE_CONTENT_TYPE[path.extname(safeName).toLowerCase()];
+      if (!contentType?.startsWith('image/')) continue;
+
+      const data = await fs.readFile(path.join(UPLOADS_DIR, safeName));
+      await pool.execute(
+        `INSERT IGNORE INTO uploaded_images
+         (filename, contentType, data, byteSize, createdAt)
+         VALUES (?, ?, ?, ?, ?)`,
+        [safeName, contentType, data, data.length, Date.now()]
+      );
+    }
+  } catch (error) {
+    console.error('Failed to backfill local uploads into persistent storage', error);
+  }
+}
+
+async function migrateLegacyItemImages() {
+  try {
+    const [items] = await pool.execute(
+      `SELECT imageUrl FROM items
+       WHERE imageUrl IS NOT NULL AND imageUrl <> ''`
+    );
+    let migrated = 0;
+
+    await Promise.all(
+      items.map(async (item) => {
+        const rawUrl = String(item.imageUrl || '').trim();
+        if (!rawUrl) return;
+
+        let sourceUrl;
+        let safeName;
+        try {
+          const parsed = new URL(rawUrl);
+          if (!parsed.pathname.startsWith('/uploads/')) return;
+          safeName = path.basename(parsed.pathname);
+          if (!safeName) return;
+          sourceUrl = normalizePublicHttpUrl(parsed.toString());
+        } catch {
+          return;
+        }
+
+        const [existingRows] = await pool.execute(
+          'SELECT filename FROM uploaded_images WHERE filename = ? LIMIT 1',
+          [safeName]
+        );
+        if (existingRows?.length) return;
+
+        try {
+          const response = await fetchWithTimeout(sourceUrl, {
+            headers: { Accept: 'image/*' },
+          });
+          if (!response.ok) return;
+
+          const contentType = String(response.headers.get('content-type') || '')
+            .split(';')[0]
+            .trim()
+            .toLowerCase();
+          if (!contentType.startsWith('image/')) return;
+
+          const data = Buffer.from(await response.arrayBuffer());
+          if (!data.length || data.length > 5 * 1024 * 1024) return;
+
+          const [result] = await pool.execute(
+            `INSERT IGNORE INTO uploaded_images
+             (filename, contentType, data, byteSize, createdAt)
+             VALUES (?, ?, ?, ?, ?)`,
+            [safeName, contentType, data, data.length, Date.now()]
+          );
+          if (Number(result?.affectedRows || 0) > 0) migrated += 1;
+        } catch {
+          // Missing legacy files require a one-time re-upload by an admin.
+        }
+      })
+    );
+
+    if (migrated > 0) {
+      console.log(`Migrated ${migrated} legacy menu image(s) into persistent storage`);
+    }
+  } catch (error) {
+    console.error('Failed to migrate legacy menu images', error);
   }
 }
 
@@ -719,8 +839,61 @@ function generatePrintClaimToken() {
 }
 
 function getPublicBaseUrl(c) {
-  if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL;
-  return new URL(c.req.url).origin;
+  let baseUrl = PUBLIC_BASE_URL;
+  if (!baseUrl) {
+    const requestUrl = new URL(c.req.url);
+    const forwardedProto = String(c.req.header('x-forwarded-proto') || '')
+      .split(',')[0]
+      .trim();
+    const forwardedHost = String(c.req.header('x-forwarded-host') || '')
+      .split(',')[0]
+      .trim();
+    baseUrl = forwardedHost
+      ? `${forwardedProto || requestUrl.protocol.replace(':', '')}://${forwardedHost}`
+      : requestUrl.origin;
+  }
+
+  return normalizePublicHttpUrl(baseUrl);
+}
+
+function getPublicImageUrl(c, input) {
+  const raw = String(input || '').trim();
+  if (!raw) return null;
+
+  try {
+    const parsed = new URL(raw, getPublicBaseUrl(c));
+    if (parsed.pathname.startsWith('/uploads/')) {
+      return `${getPublicBaseUrl(c)}${parsed.pathname}${parsed.search}`;
+    }
+    return parsed.toString();
+  } catch {
+    return raw;
+  }
+}
+
+function getUploadedFileName(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+
+  try {
+    const pathname = new URL(raw, 'http://localhost').pathname;
+    if (!pathname.startsWith('/uploads/')) return '';
+    return path.basename(pathname);
+  } catch {
+    return '';
+  }
+}
+
+async function deleteUploadedImage(input) {
+  const filename = getUploadedFileName(input);
+  if (!filename) return;
+
+  await pool.execute('DELETE FROM uploaded_images WHERE filename = ?', [filename]);
+  try {
+    await fs.unlink(path.join(UPLOADS_DIR, filename));
+  } catch {
+    // Ignore if the ephemeral local cache is already missing.
+  }
 }
 
 function getStaticContentType(filePath) {
@@ -935,17 +1108,21 @@ async function getAdminSessionUserFromRequest(c) {
 await ensureDatabase();
 await initSchema();
 await ensureUploadsDir();
+await backfillLocalUploads();
+await migrateLegacyItemImages();
 
 // Serve uploaded images
 app.get('/uploads/:filename', async (c) => {
-  try {
-    const filename = c.req.param('filename');
-    if (!filename) return c.text('Not found', 404);
+  const filename = c.req.param('filename');
+  if (!filename) {
+    c.header('Cache-Control', 'no-store');
+    return c.text('Not found', 404);
+  }
 
-    const safeName = path.basename(filename);
+  const safeName = path.basename(filename);
+  try {
     const filePath = path.join(UPLOADS_DIR, safeName);
     const data = await fs.readFile(filePath);
-
     const ext = path.extname(safeName).toLowerCase();
     const contentType = EXT_TO_IMAGE_CONTENT_TYPE[ext] || 'application/octet-stream';
 
@@ -956,8 +1133,31 @@ app.get('/uploads/:filename', async (c) => {
       },
     });
   } catch {
-    return c.text('Not found', 404);
+    // Railway local storage is ephemeral; persistent storage is the source of truth.
   }
+
+  try {
+    const [rows] = await pool.execute(
+      'SELECT contentType, data, byteSize FROM uploaded_images WHERE filename = ? LIMIT 1',
+      [safeName]
+    );
+    const stored = rows?.[0];
+    if (stored?.data) {
+      const data = Buffer.isBuffer(stored.data) ? stored.data : Buffer.from(stored.data);
+      return new Response(data, {
+        headers: {
+          'Content-Type': String(stored.contentType || 'application/octet-stream'),
+          'Content-Length': String(Number(stored.byteSize) || data.length),
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        },
+      });
+    }
+  } catch (error) {
+    console.error('Failed to read uploaded image from persistent storage', error);
+  }
+
+  c.header('Cache-Control', 'no-store');
+  return c.text('Not found', 404);
 });
 
 // Health
@@ -1377,7 +1577,11 @@ app.get('/api/menu/items', async (c) => {
   try {
     const [items] = await pool.execute('SELECT * FROM items');
     const [categories] = await pool.execute('SELECT * FROM categories ORDER BY `order` ASC');
-    return c.json({ success: true, items, categories });
+    const publicItems = items.map((item) => ({
+      ...item,
+      imageUrl: getPublicImageUrl(c, item.imageUrl),
+    }));
+    return c.json({ success: true, items: publicItems, categories });
   } catch (e) {
     console.error('Error fetching menu', e);
     return c.json({ error: 'Failed to fetch menu' }, 500);
@@ -1391,7 +1595,11 @@ app.get('/api/admin/menu', async (c) => {
   try {
     const [items] = await pool.execute('SELECT * FROM items');
     const [categories] = await pool.execute('SELECT * FROM categories ORDER BY `order` ASC');
-    return c.json({ success: true, items, categories });
+    const publicItems = items.map((item) => ({
+      ...item,
+      imageUrl: getPublicImageUrl(c, item.imageUrl),
+    }));
+    return c.json({ success: true, items: publicItems, categories });
   } catch (e) {
     console.error('Error fetching admin menu', e);
     return c.json({ error: 'Failed to fetch admin menu' }, 500);
@@ -2508,10 +2716,17 @@ app.put('/api/admin/menu/item/:id', async (c) => {
   descriptionEn = hasDescriptionEn ? descriptionEn || null : description || null;
   descriptionAr = hasDescriptionAr ? descriptionAr || null : description || null;
   description = descriptionEn || descriptionAr || null;
+  const [existingRows] = await pool.execute('SELECT imageUrl FROM items WHERE id = ? LIMIT 1', [id]);
+  const previousImageUrl = existingRows?.[0]?.imageUrl || null;
   await pool.execute(
     'UPDATE items SET nameEn=?, nameAr=?, price=?, category=?, description=?, descriptionEn=?, descriptionAr=?, imageUrl=?, available=? WHERE id=?',
     [nameEn, nameAr, price, category, description, descriptionEn, descriptionAr, imageUrl || null, available ? 1 : 0, id]
   );
+  if (getUploadedFileName(previousImageUrl) !== getUploadedFileName(imageUrl)) {
+    await deleteUploadedImage(previousImageUrl).catch((error) => {
+      console.error('Failed to remove replaced menu image', error);
+    });
+  }
   return c.json({
     success: true,
     item: {
@@ -2533,7 +2748,12 @@ app.delete('/api/admin/menu/item/:id', async (c) => {
   const unauthorized = await requireAdmin(c);
   if (unauthorized) return unauthorized;
   const id = c.req.param('id');
+  const [rows] = await pool.execute('SELECT imageUrl FROM items WHERE id = ? LIMIT 1', [id]);
+  const imageUrl = rows?.[0]?.imageUrl || null;
   await pool.execute('DELETE FROM items WHERE id=?', [id]);
+  await deleteUploadedImage(imageUrl).catch((error) => {
+    console.error('Failed to remove deleted item image', error);
+  });
   return c.json({ success: true });
 });
 
@@ -3556,7 +3776,18 @@ app.post('/api/admin/upload-image', async (c) => {
     const name = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}${safeExt || '.bin'}`;
 
     const buf = Buffer.from(await file.arrayBuffer());
-    await fs.writeFile(path.join(UPLOADS_DIR, name), buf);
+    await pool.execute(
+      `INSERT INTO uploaded_images
+       (filename, contentType, data, byteSize, createdAt)
+       VALUES (?, ?, ?, ?, ?)`,
+      [name, effectiveImageType, buf, buf.length, Date.now()]
+    );
+
+    try {
+      await fs.writeFile(path.join(UPLOADS_DIR, name), buf);
+    } catch (error) {
+      console.warn('Image persisted to database but local cache write failed', error);
+    }
 
     const origin = getPublicBaseUrl(c);
     return c.json({ success: true, imageUrl: `${origin}/uploads/${name}` });
@@ -3574,26 +3805,8 @@ app.delete('/api/admin/menu/item/:id/image', async (c) => {
     const id = c.req.param('id');
     const [rows] = await pool.execute('SELECT imageUrl FROM items WHERE id = ? LIMIT 1', [id]);
     const imageUrl = rows && rows[0] ? String(rows[0].imageUrl || '') : '';
-
-    if (imageUrl) {
-      let pathPart = imageUrl;
-      try {
-        pathPart = new URL(imageUrl).pathname;
-      } catch {
-        // ignore
-      }
-      if (pathPart.startsWith('/uploads/')) {
-        const fileName = pathPart.slice('/uploads/'.length).replace(/\?.*$/, '');
-        const filePath = path.join(UPLOADS_DIR, path.basename(fileName));
-        try {
-          await fs.unlink(filePath);
-        } catch {
-          // Ignore if already missing
-        }
-      }
-    }
-
     await pool.execute('UPDATE items SET imageUrl = NULL WHERE id = ?', [id]);
+    await deleteUploadedImage(imageUrl);
     return c.json({ success: true });
   } catch (e) {
     console.error('Error removing item image', e);

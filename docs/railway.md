@@ -67,7 +67,9 @@ In the Android app:
 
 ## 7. Notes about persistence
 - MySQL on Railway **is persistent** (your orders history will stay).
-- The `/uploads` directory is **ephemeral** on Railway. If you need to keep images forever, move uploads to S3/R2 later.
+- Uploaded menu images are stored in MySQL and served through `/uploads`, so they survive API deploys and restarts.
+- The local `/uploads` directory is only a compatibility/cache layer and may be ephemeral on Railway.
+- On the first deployment of this version, the API copies any still-accessible legacy images into MySQL. Legacy files that already return 404 must be re-uploaded once.
 
 ## 8. Quick checks
 - API: `https://api.sightcoffeespace.com/api/health` should return 200.

@@ -127,6 +127,16 @@ export async function initSchema() {
   `);
 
   await pool.execute(`
+    CREATE TABLE IF NOT EXISTS uploaded_images (
+      filename VARCHAR(255) PRIMARY KEY,
+      contentType VARCHAR(64) NOT NULL,
+      data MEDIUMBLOB NOT NULL,
+      byteSize INT UNSIGNED NOT NULL,
+      createdAt BIGINT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.execute(`
     CREATE TABLE IF NOT EXISTS orders (
       id VARCHAR(64) PRIMARY KEY,
       orderNumber VARCHAR(32) NOT NULL,
