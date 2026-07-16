@@ -23,6 +23,7 @@ interface CartItem {
   nameAr: string;
   price: number;
   quantity: number;
+  category: string;
   temperature?: DrinkTemperature;
 }
 

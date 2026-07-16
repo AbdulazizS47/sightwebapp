@@ -8,6 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pool, initSchema, ensureDatabase } from './db.js';
 import { sendOtpSms } from './sms.js';
+import { selectFreeCoffeeReward } from './loyalty.js';
 import {
   getOrderNotificationStatus,
   sendInventoryLowStockNotification,
@@ -387,7 +388,18 @@ async function loadCanonicalOrderItems(items, effectiveLanguage, db = pool) {
   const ids = Array.from(new Set(normalizedItems.map((it) => it.id)));
   const placeholders = ids.map(() => '?').join(',');
   const [rows] = await db.execute(
-    `SELECT id, nameEn, nameAr, price, available FROM items WHERE id IN (${placeholders})`,
+    `SELECT
+       i.id,
+       i.nameEn,
+       i.nameAr,
+       i.price,
+       i.available,
+       i.category,
+       c.nameEn AS categoryNameEn,
+       c.nameAr AS categoryNameAr
+     FROM items i
+     LEFT JOIN categories c ON c.id = i.category
+     WHERE i.id IN (${placeholders})`,
     ids
   );
   const byId = new Map((Array.isArray(rows) ? rows : []).map((row) => [String(row.id), row]));
@@ -422,6 +434,9 @@ async function loadCanonicalOrderItems(items, effectiveLanguage, db = pool) {
       nameAr: displayNameAr,
       price: Number.isFinite(price) ? price : 0,
       quantity: it.quantity,
+      category: String(row?.category || ''),
+      categoryNameEn: String(row?.categoryNameEn || ''),
+      categoryNameAr: String(row?.categoryNameAr || ''),
       ...(it.options ? { options: it.options } : {}),
     };
   });
@@ -526,6 +541,8 @@ async function buildOrderPricing({
   let effectiveTotal = itemsTotal;
   let rewardType = null;
   let rewardDiscountAmount = 0;
+  let rewardItemId = null;
+  let rewardItemName = null;
 
   if (effectiveUserId && redeemReward) {
     const [rows] = await db.execute(
@@ -537,18 +554,28 @@ async function buildOrderPricing({
     rewardType = stamps === LOYALTY_REWARD_CYCLE ? 'free' : null;
 
     if (rewardType === 'free') {
-      const maxUnitPrice = effectiveItems.reduce(
-        (max, item) => Math.max(max, Number(item.price) || 0),
-        0
+      const selectedReward = selectFreeCoffeeReward(effectiveItems);
+      const discount = roundMoney(
+        Math.min(Number(selectedReward?.unitPrice || 0), effectiveTotal)
       );
-      const discount = roundMoney(Math.min(maxUnitPrice, effectiveTotal));
       if (discount > 0) {
+        const selectedItem = selectedReward.item;
+        rewardItemId = String(selectedItem.id || '');
+        rewardItemName =
+          effectiveLanguage === 'ar'
+            ? String(selectedItem.nameAr || selectedItem.name || selectedItem.nameEn || '')
+            : String(selectedItem.nameEn || selectedItem.name || selectedItem.nameAr || '');
         rewardDiscountAmount = discount;
         effectiveItems = [
           ...effectiveItems,
           {
             id: 'reward-discount',
-            name: effectiveLanguage === 'ar' ? 'خصم المكافأة' : 'Reward discount',
+            name:
+              effectiveLanguage === 'ar'
+                ? `كوب قهوة مجاني: ${rewardItemName}`
+                : `Free coffee: ${rewardItemName}`,
+            nameEn: `Free coffee: ${String(selectedItem.nameEn || selectedItem.name || '')}`,
+            nameAr: `كوب قهوة مجاني: ${String(selectedItem.nameAr || selectedItem.name || '')}`,
             price: -discount,
             quantity: 1,
           },
@@ -658,6 +685,8 @@ async function buildOrderPricing({
     rewardType,
     rewardApplied: rewardDiscountAmount > 0,
     rewardDiscountAmount,
+    rewardItemId,
+    rewardItemName,
     discountCodeRequested: discountCodeRequested || null,
     discountCodeApplied,
     discountCode: appliedDiscountCode,

@@ -1,0 +1,39 @@
+import { describe, expect, it } from 'vitest';
+import { selectFreeCoffeeReward } from './loyalty.js';
+
+describe('selectFreeCoffeeReward', () => {
+  it('does not use a higher-priced sweet as the fifth-order reward', () => {
+    const reward = selectFreeCoffeeReward([
+      { id: 'latte', nameEn: 'Latte', category: 'coffee', price: 15, quantity: 1 },
+      { id: 'cake', nameEn: 'Cake', category: 'sweets', price: 25, quantity: 1 },
+    ]);
+
+    expect(reward?.item.id).toBe('latte');
+    expect(reward?.unitPrice).toBe(15);
+  });
+
+  it('makes only one coffee unit free when quantity is greater than one', () => {
+    const reward = selectFreeCoffeeReward([
+      { id: 'v60', nameEn: 'V60', category: 'v60', price: 18, quantity: 4 },
+    ]);
+
+    expect(reward?.unitPrice).toBe(18);
+  });
+
+  it('does not apply a free-cup reward when the cart has no coffee', () => {
+    const reward = selectFreeCoffeeReward([
+      { id: 'brownie', nameEn: 'Brownie', category: 'pastries', price: 22, quantity: 1 },
+      { id: 'matcha', nameEn: 'Matcha', category: 'not-coffee', price: 20, quantity: 1 },
+    ]);
+
+    expect(reward).toBeNull();
+  });
+
+  it('does not treat an unrelated retail category as coffee', () => {
+    const reward = selectFreeCoffeeReward([
+      { id: 'coffee-beans-bag', nameEn: 'Coffee Beans Bag', category: 'retail', price: 80 },
+    ]);
+
+    expect(reward).toBeNull();
+  });
+});

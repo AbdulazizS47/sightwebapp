@@ -11,6 +11,7 @@ interface CartItem {
   nameAr: string;
   price: number;
   quantity: number;
+  category: string;
   temperature?: DrinkTemperature;
 }
 
@@ -23,6 +24,8 @@ interface PricingSummary {
   rewardType: 'free' | null;
   rewardApplied: boolean;
   rewardDiscountAmount: number;
+  rewardItemId?: string | null;
+  rewardItemName?: string | null;
   discountCodeRequested: string | null;
   discountCodeApplied: boolean;
   discountCode: string | null;
@@ -178,8 +181,32 @@ export function CartModal({
   const itemsTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const rewardType = loyalty?.enabled && loyalty.stamps === loyaltyRewardCycle ? 'free' : null;
   const rewardActive = Boolean(redeemReward && rewardType);
-  const maxUnitPrice = items.reduce((max, item) => Math.max(max, item.price || 0), 0);
-  const rewardDiscountAmount = rewardActive ? Math.min(maxUnitPrice, itemsTotal) : 0;
+  const nonCoffeeCategoryTerms = [
+    'not-coffee',
+    'not coffee',
+    'non-coffee',
+    'non coffee',
+    'sweet',
+    'pastry',
+    'dessert',
+  ];
+  const coffeeCategoryTerms = ['coffee', 'espresso', 'v60'];
+  const legacyCoffeeCategoryIds = ['hot', 'cold'];
+  const eligibleCoffeeItems = items.filter((item) => {
+    const category = String(item.category || '').trim().toLowerCase();
+    if (!category || nonCoffeeCategoryTerms.some((term) => category.includes(term))) return false;
+    return (
+      legacyCoffeeCategoryIds.includes(category) ||
+      coffeeCategoryTerms.some((term) => category.includes(term))
+    );
+  });
+  const rewardCoffee = eligibleCoffeeItems.reduce<CartItem | null>((selected, item) => {
+    if (!selected || item.price > selected.price) return item;
+    return selected;
+  }, null);
+  const rewardDiscountAmount = rewardActive
+    ? Math.min(Number(rewardCoffee?.price || 0), itemsTotal)
+    : 0;
   const fallbackTotal = Math.max(0, itemsTotal - rewardDiscountAmount);
   const fallbackVatAmount = fallbackTotal * (vatRate / (1 + vatRate));
   const fallbackSubtotal = fallbackTotal - fallbackVatAmount;
@@ -193,6 +220,13 @@ export function CartModal({
     rewardType,
     rewardApplied: rewardDiscountAmount > 0,
     rewardDiscountAmount,
+    rewardItemId: rewardDiscountAmount > 0 ? rewardCoffee?.id || null : null,
+    rewardItemName:
+      rewardDiscountAmount > 0
+        ? language === 'ar'
+          ? rewardCoffee?.nameAr || null
+          : rewardCoffee?.nameEn || null
+        : null,
     discountCodeRequested: appliedDiscountCode,
     discountCodeApplied: false,
     discountCode: null,
