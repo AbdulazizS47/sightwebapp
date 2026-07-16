@@ -3,14 +3,6 @@ const NON_COFFEE_CATEGORY_TERMS = [
   'not coffee',
   'non-coffee',
   'non coffee',
-  'sweet',
-  'sweets',
-  'pastry',
-  'pastries',
-  'dessert',
-  'desserts',
-  'حلويات',
-  'حلى',
   'غير القهوة',
 ];
 
@@ -42,23 +34,31 @@ export function isCoffeeRewardEligible(item) {
   if (NON_COFFEE_CATEGORY_TERMS.some((term) => categoryText.includes(term))) return false;
 
   const categoryId = String(item?.category || '').trim().toLowerCase();
-  return (
+  const hasCoffeeCategory =
     LEGACY_COFFEE_CATEGORY_IDS.has(categoryId) ||
-    COFFEE_CATEGORY_TERMS.some((term) => categoryText.includes(term))
-  );
+    COFFEE_CATEGORY_TERMS.some((term) => categoryText.includes(term));
+
+  // A Coffee + sweet bundle contains an eligible cup, but a sweets-only item does not.
+  return hasCoffeeCategory;
 }
 
 /**
  * Selects one eligible coffee unit. Quantity is deliberately ignored: even if
  * the customer orders several cups, only one unit is free.
  */
-export function selectFreeCoffeeReward(items) {
+export function selectFreeCoffeeReward(items, maxRewardValue = Number.POSITIVE_INFINITY) {
+  const safeMaxRewardValue = Number.isFinite(Number(maxRewardValue))
+    ? Math.max(0, Number(maxRewardValue))
+    : Number.POSITIVE_INFINITY;
+
   return (Array.isArray(items) ? items : []).reduce((selected, item) => {
     if (!isCoffeeRewardEligible(item)) return selected;
-    const unitPrice = Number(item?.price || 0);
-    if (!Number.isFinite(unitPrice) || unitPrice <= 0) return selected;
-    if (!selected || unitPrice > selected.unitPrice) {
-      return { item, unitPrice };
+    const itemUnitPrice = Number(item?.price || 0);
+    if (!Number.isFinite(itemUnitPrice) || itemUnitPrice <= 0) return selected;
+    const rewardValue = Math.min(itemUnitPrice, safeMaxRewardValue);
+    if (rewardValue <= 0) return selected;
+    if (!selected || rewardValue > selected.unitPrice) {
+      return { item, unitPrice: rewardValue };
     }
     return selected;
   }, null);

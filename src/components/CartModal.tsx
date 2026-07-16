@@ -139,6 +139,7 @@ export function CartModal({
   const isRTL = language === 'ar';
   const vatRate = 0.15;
   const loyaltyRewardCycle = 5;
+  const loyaltyFreeCupValueSar = 9;
 
   const getCartKey = (item: CartItem) => item.cartKey || item.id;
   const previewEndpointUrls = getApiRequestUrls('/orders/price-preview');
@@ -181,20 +182,18 @@ export function CartModal({
   const itemsTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const rewardType = loyalty?.enabled && loyalty.stamps === loyaltyRewardCycle ? 'free' : null;
   const rewardActive = Boolean(redeemReward && rewardType);
-  const nonCoffeeCategoryTerms = [
-    'not-coffee',
-    'not coffee',
-    'non-coffee',
-    'non coffee',
-    'sweet',
-    'pastry',
-    'dessert',
-  ];
   const coffeeCategoryTerms = ['coffee', 'espresso', 'v60'];
   const legacyCoffeeCategoryIds = ['hot', 'cold'];
   const eligibleCoffeeItems = items.filter((item) => {
     const category = String(item.category || '').trim().toLowerCase();
-    if (!category || nonCoffeeCategoryTerms.some((term) => category.includes(term))) return false;
+    if (
+      !category ||
+      ['not-coffee', 'not coffee', 'non-coffee', 'non coffee'].some((term) =>
+        category.includes(term)
+      )
+    ) {
+      return false;
+    }
     return (
       legacyCoffeeCategoryIds.includes(category) ||
       coffeeCategoryTerms.some((term) => category.includes(term))
@@ -205,7 +204,7 @@ export function CartModal({
     return selected;
   }, null);
   const rewardDiscountAmount = rewardActive
-    ? Math.min(Number(rewardCoffee?.price || 0), itemsTotal)
+    ? Math.min(Number(rewardCoffee?.price || 0), loyaltyFreeCupValueSar, itemsTotal)
     : 0;
   const fallbackTotal = Math.max(0, itemsTotal - rewardDiscountAmount);
   const fallbackVatAmount = fallbackTotal * (vatRate / (1 + vatRate));

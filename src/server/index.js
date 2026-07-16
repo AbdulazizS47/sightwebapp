@@ -147,6 +147,10 @@ const UPLOAD_ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png']);
 const MAX_UPLOAD_IMAGE_BYTES = 1024 * 1024;
 const ORDER_VAT_RATE = 0.15;
 const LOYALTY_REWARD_CYCLE = 5;
+const LOYALTY_FREE_CUP_VALUE_SAR = Math.max(
+  Number(process.env.LOYALTY_FREE_CUP_VALUE_SAR || 9) || 9,
+  0
+);
 const BUILD_DIR = path.join(process.cwd(), 'build');
 // In-memory cache of sessions (persistent store is MySQL)
 const sessions = new Map();
@@ -554,7 +558,10 @@ async function buildOrderPricing({
     rewardType = stamps === LOYALTY_REWARD_CYCLE ? 'free' : null;
 
     if (rewardType === 'free') {
-      const selectedReward = selectFreeCoffeeReward(effectiveItems);
+      const selectedReward = selectFreeCoffeeReward(
+        effectiveItems,
+        LOYALTY_FREE_CUP_VALUE_SAR
+      );
       const discount = roundMoney(
         Math.min(Number(selectedReward?.unitPrice || 0), effectiveTotal)
       );
