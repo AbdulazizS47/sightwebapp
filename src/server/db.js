@@ -376,7 +376,7 @@ export async function initSchema() {
         0,
         15,
         0,
-        1,
+        0,
         now,
         now,
         'SIGHT15',
@@ -387,7 +387,7 @@ export async function initSchema() {
         40,
         15,
         0,
-        1,
+        0,
         now,
         now,
         'MISSU',
@@ -399,7 +399,7 @@ export async function initSchema() {
         9,
         1,
         0,
-        1,
+        0,
         now,
         now,
         'اشتقت',
@@ -411,7 +411,7 @@ export async function initSchema() {
         9,
         1,
         0,
-        1,
+        0,
         now,
         now,
       ]
@@ -424,6 +424,7 @@ export async function initSchema() {
          WHEN code = 'SIGHT15' THEN 'SIGHT15'
          ELSE usageGroup
        END,
+       active = 0,
        updatedAt = ?
        WHERE code IN ('WELCOME10', 'SIGHT15', 'MISSU', 'اشتقت')`,
       [now]
