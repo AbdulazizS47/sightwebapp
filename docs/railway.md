@@ -33,6 +33,33 @@ Recommended (OTP/SMS):
 - `OTP_DEV_MODE=false` on live Railway services
 - `OTP_DEV_MODE=true` only for temporary testing without SMS
 
+Telegram sales agent:
+- Create a bot with Telegram's `@BotFather`, then set `TELEGRAM_BOT_TOKEN`.
+- Send the bot a message and obtain your numeric owner chat ID, then set both
+  `TELEGRAM_CHAT_ID` and `TELEGRAM_AGENT_CHAT_IDS` to that ID. Multiple IDs can be comma-separated.
+- Set `TELEGRAM_AGENT_ENABLED=true`.
+- Set `TELEGRAM_WEBHOOK_SECRET` to a long random value containing only letters, numbers,
+  underscores, and hyphens.
+- Set `TELEGRAM_DAILY_REPORT_TIME=09:00` (24-hour time). The bot sends the previous calendar
+  day's report using the app's configured timezone (`Asia/Riyadh` by default).
+- `PUBLIC_BASE_URL` must be the public HTTPS API origin. The API configures the Telegram webhook
+  automatically at startup.
+
+Available owner commands: `/today`, `/yesterday`, `/report YYYY-MM-DD`, and `/help`.
+
+Optional AI operational manager:
+- Create an OpenAI project API key and store it only on the API service as `OPENAI_API_KEY`.
+- Set `OPENAI_OPERATIONAL_AGENT_ENABLED=true`.
+- Set `OPENAI_OPERATIONAL_AGENT_MODEL=gpt-5.6-terra`.
+- Set `OPENAI_OPERATIONAL_AGENT_REASONING=medium`.
+- Redeploy the API service. The bot will then accept natural English and Arabic operational
+  questions and the `/operations` command.
+- Use `/reset` to clear the current Telegram conversation context.
+
+The AI layer is read-only. It can query typed sales, open-order, inventory, inventory-risk,
+movement, and data-quality tools. It cannot execute arbitrary SQL or change orders, inventory,
+prices, discounts, settings, or customer communications.
+
 For Android OTP keyboard suggestions/WebOTP, the Authentica SMS template should include the
 customer-facing site host on the final line, for example `@sightcoffeespace.com #{{otp}}`.
 

@@ -305,6 +305,35 @@ export async function initSchema() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS agent_conversations (
+      channel VARCHAR(32) NOT NULL,
+      externalIdHash CHAR(64) NOT NULL,
+      previousResponseId VARCHAR(128) NULL,
+      language VARCHAR(16) NULL,
+      createdAt BIGINT NOT NULL,
+      updatedAt BIGINT NOT NULL,
+      PRIMARY KEY (channel, externalIdHash)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      channel VARCHAR(32) NOT NULL,
+      externalIdHash CHAR(64) NOT NULL,
+      requestId VARCHAR(128) NULL,
+      model VARCHAR(128) NOT NULL,
+      status VARCHAR(32) NOT NULL,
+      inputChars INT NOT NULL DEFAULT 0,
+      outputChars INT NOT NULL DEFAULT 0,
+      toolCalls JSON NULL,
+      usageJson JSON NULL,
+      errorCode VARCHAR(128) NULL,
+      createdAt BIGINT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
   // Best-effort indexes (ignore if already present)
   const ensureIndex = async (sql) => {
     try {
@@ -356,6 +385,10 @@ export async function initSchema() {
   await ensureIndex(
     'CREATE INDEX idx_inventory_movements_reason_created ON inventory_movements(reason, createdAt)'
   );
+  await ensureIndex(
+    'CREATE INDEX idx_agent_runs_channel_external_created ON agent_runs(channel, externalIdHash, createdAt)'
+  );
+  await ensureIndex('CREATE INDEX idx_agent_runs_status_created ON agent_runs(status, createdAt)');
 
   if (DEV_SEED_DISCOUNT_CODES) {
     const now = Date.now();

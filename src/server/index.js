@@ -14,6 +14,11 @@ import {
   sendInventoryLowStockNotification,
   sendNewOrderNotification,
 } from './notifications.js';
+import {
+  getTelegramAgentStatus,
+  handleTelegramUpdate,
+  startTelegramAgent,
+} from './telegram-agent.js';
 
 const app = new Hono();
 const printApi = new Hono();
@@ -1219,6 +1224,7 @@ app.get('/api/health', async (c) => {
     timestamp,
     version: 'mysql-1.0.0',
     db: dbStatus,
+    telegramAgent: getTelegramAgentStatus(),
     ...(dbLatencyMs != null ? { dbLatencyMs } : {}),
   };
 
@@ -1226,6 +1232,16 @@ app.get('/api/health', async (c) => {
     return c.json(payload, 503);
   }
   return c.json(payload);
+});
+
+app.post('/api/telegram/webhook', async (c) => {
+  const update = await c.req.json().catch(() => null);
+  if (!update) return c.json({ error: 'Invalid Telegram update' }, 400);
+  const result = await handleTelegramUpdate(
+    update,
+    c.req.header('X-Telegram-Bot-Api-Secret-Token') || ''
+  );
+  return c.json(result.body, result.status);
 });
 app.get('/', async (c) => {
   const served = await serveBuiltFile(c, 'index.html', true);
@@ -3868,6 +3884,7 @@ const HOST = (process.env.HOST || '0.0.0.0').trim();
 const server = serve({ fetch: app.fetch, port: PORT, hostname: HOST }, () => {
   console.log(`Server running at http://${HOST}:${PORT}`);
 });
+const stopTelegramAgent = startTelegramAgent();
 
 const shutdown = (signal, exitCode = 0, error) => {
   console.log(`${signal} received, shutting down...`);
@@ -3879,6 +3896,7 @@ const shutdown = (signal, exitCode = 0, error) => {
   const finish = async () => {
     if (exited) return;
     exited = true;
+    stopTelegramAgent();
     try {
       await pool.end();
     } catch (e) {

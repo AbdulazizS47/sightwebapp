@@ -127,37 +127,81 @@ export function buildInventoryLowStockMessage(item) {
   ].join('\n');
 }
 
-async function postTelegramMessage(chatId, text) {
+export function getTelegramBotConfig() {
+  return {
+    botTokenConfigured: Boolean(telegramBotToken),
+    chatIds: [...telegramChatIds],
+    apiBase: telegramApiBase,
+  };
+}
+
+export async function callTelegramBotApi(method, payload) {
+  if (!telegramBotToken) throw new Error('TELEGRAM_BOT_TOKEN is not set');
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), notifyTimeoutMs);
 
   try {
     const response = await fetch(
-      `${telegramApiBase}/bot${telegramBotToken}/sendMessage`,
+      `${telegramApiBase}/bot${telegramBotToken}/${method}`,
       {
         method: 'POST',
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text,
-          disable_web_page_preview: true,
-        }),
+        body: JSON.stringify(payload),
         signal: controller.signal,
       }
     );
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      throw new Error(`Telegram sendMessage failed: HTTP ${response.status} ${body}`);
+      throw new Error(`Telegram ${method} failed: HTTP ${response.status} ${body}`);
     }
 
-    return true;
+    const body = await response.json().catch(() => null);
+    if (body && body.ok === false) {
+      throw new Error(`Telegram ${method} failed: ${body.description || 'Unknown error'}`);
+    }
+    return body?.result ?? true;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function sendTelegramMessage(chatId, text) {
+  return callTelegramBotApi('sendMessage', {
+    chat_id: chatId,
+    text,
+    disable_web_page_preview: true,
+  });
+}
+
+export function splitTelegramText(text, maxLength = 3900) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  const limit = Math.min(Math.max(Number(maxLength) || 3900, 100), 4096);
+  const chunks = [];
+  let remaining = raw;
+  while (remaining.length > limit) {
+    let splitAt = remaining.lastIndexOf('\n\n', limit);
+    if (splitAt < Math.floor(limit * 0.5)) splitAt = remaining.lastIndexOf('\n', limit);
+    if (splitAt < Math.floor(limit * 0.5)) splitAt = remaining.lastIndexOf(' ', limit);
+    if (splitAt < 1) splitAt = limit;
+    chunks.push(remaining.slice(0, splitAt).trim());
+    remaining = remaining.slice(splitAt).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+export async function sendTelegramLongMessage(chatId, text) {
+  const chunks = splitTelegramText(text);
+  for (const chunk of chunks) {
+    await sendTelegramMessage(chatId, chunk);
+  }
+  return chunks.length > 0;
 }
 
 export async function sendNewOrderNotification(order) {
@@ -167,7 +211,7 @@ export async function sendNewOrderNotification(order) {
   if (telegramChatIds.length === 0) throw new Error('TELEGRAM_CHAT_ID is not set');
 
   const message = buildNewOrderMessage(order);
-  await Promise.all(telegramChatIds.map((chatId) => postTelegramMessage(chatId, message)));
+  await Promise.all(telegramChatIds.map((chatId) => sendTelegramMessage(chatId, message)));
   return true;
 }
 
@@ -178,6 +222,6 @@ export async function sendInventoryLowStockNotification(item) {
   if (telegramChatIds.length === 0) throw new Error('TELEGRAM_CHAT_ID is not set');
 
   const message = buildInventoryLowStockMessage(item);
-  await Promise.all(telegramChatIds.map((chatId) => postTelegramMessage(chatId, message)));
+  await Promise.all(telegramChatIds.map((chatId) => sendTelegramMessage(chatId, message)));
   return true;
 }
