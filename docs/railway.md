@@ -29,6 +29,14 @@ Recommended (OTP/SMS):
 - `AUTHENTICA_TEMPLATE_ID`
 - `AUTHENTICA_METHOD`
 - `PUBLIC_BASE_URL=https://api.sightcoffeespace.com`
+
+Optional (direct WhatsApp OTP via Meta, falls back to Authentica SMS above if unset or if
+delivery fails — see `docs/whatsapp-otp-setup.md` for the full walkthrough):
+- `WHATSAPP_CLOUD_API_TOKEN`
+- `WHATSAPP_PHONE_NUMBER_ID`
+- `WHATSAPP_OTP_TEMPLATE_NAME`
+- `WHATSAPP_OTP_TEMPLATE_LANG_EN`, `WHATSAPP_OTP_TEMPLATE_LANG_AR`
+- `WHATSAPP_OTP_TEMPLATE_HAS_BUTTON`
 - `OTP_WEB_ORIGIN=sightcoffeespace.com`
 - `OTP_DEV_MODE=false` on live Railway services
 - `OTP_DEV_MODE=true` only for temporary testing without SMS

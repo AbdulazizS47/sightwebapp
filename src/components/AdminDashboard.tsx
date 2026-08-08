@@ -85,6 +85,9 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
   const [newStaffName, setNewStaffName] = useState('');
   const [newStaffPhone, setNewStaffPhone] = useState('');
   const [creatingStaff, setCreatingStaff] = useState(false);
+  const [pendingConvert, setPendingConvert] = useState<{ existingName: string | null } | null>(
+    null
+  );
   const [editingStaffId, setEditingStaffId] = useState<string | null>(null);
   const [editStaffName, setEditStaffName] = useState('');
   const [savingStaffId, setSavingStaffId] = useState<string | null>(null);
@@ -111,6 +114,8 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       staffName: 'Name',
       staffPhone: 'Phone Number',
       staffHint: 'The cashier signs in with this phone number using a normal SMS code, just like admin.',
+      convertExistingPrompt: 'A customer account already uses this phone number. Convert it to a cashier account instead?',
+      convertExistingConfirm: 'Convert to Cashier',
       addStaff: 'Add Cashier',
       status: 'Status',
       activeStatus: 'Active',
@@ -169,6 +174,8 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       staffName: 'الاسم',
       staffPhone: 'رقم الهاتف',
       staffHint: 'يسجل الكاشير الدخول بهذا الرقم عبر رمز SMS عادي، تمامًا مثل المدير.',
+      convertExistingPrompt: 'يوجد حساب عميل بهذا الرقم بالفعل. هل تريد تحويله إلى حساب كاشير؟',
+      convertExistingConfirm: 'تحويل إلى كاشير',
       addStaff: 'إضافة كاشير',
       status: 'الحالة',
       activeStatus: 'مفعل',
@@ -260,7 +267,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
     }
   };
 
-  const createStaff = async () => {
+  const createStaff = async (convertExisting = false) => {
     setStaffError('');
     if (!newStaffName.trim() || !newStaffPhone.trim()) return;
     setCreatingStaff(true);
@@ -274,13 +281,20 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
         body: JSON.stringify({
           name: newStaffName.trim(),
           phoneNumber: newStaffPhone.trim(),
+          ...(convertExisting ? { convertExisting: true } : {}),
         }),
       });
       const data = await res.json();
       if (!data.success) {
+        if (data.existingRole === 'user') {
+          setPendingConvert({ existingName: data.existingName || null });
+        } else {
+          setPendingConvert(null);
+        }
         setStaffError(data.error || 'Failed to create staff account');
         return;
       }
+      setPendingConvert(null);
       setNewStaffName('');
       setNewStaffPhone('');
       await loadStaff();
@@ -759,7 +773,10 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
                   </label>
                   <input
                     value={newStaffName}
-                    onChange={(e) => setNewStaffName(e.target.value)}
+                    onChange={(e) => {
+                      setNewStaffName(e.target.value);
+                      setPendingConvert(null);
+                    }}
                     className="w-full mt-1 px-3 py-2 border-2 border-[var(--matte-black)] text-sm"
                   />
                 </div>
@@ -769,7 +786,10 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
                   </label>
                   <input
                     value={newStaffPhone}
-                    onChange={(e) => setNewStaffPhone(e.target.value)}
+                    onChange={(e) => {
+                      setNewStaffPhone(e.target.value);
+                      setPendingConvert(null);
+                    }}
                     placeholder="05XXXXXXXX"
                     dir="ltr"
                     className="w-full mt-1 px-3 py-2 border-2 border-[var(--matte-black)] text-sm"
@@ -778,8 +798,23 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
               </div>
               <div className="text-xs text-[var(--matte-black)] opacity-60 mt-2">{text.staffHint}</div>
               {staffError && <div className="text-red-600 text-sm mt-3">{staffError}</div>}
+              {pendingConvert && (
+                <div className="mt-3 p-3 border-2 border-[var(--matte-black)] bg-[var(--cool-gray)] text-sm">
+                  <div className="mb-2">
+                    {text.convertExistingPrompt}
+                    {pendingConvert.existingName ? ` (${pendingConvert.existingName})` : ''}
+                  </div>
+                  <button
+                    onClick={() => createStaff(true)}
+                    disabled={creatingStaff}
+                    className="px-3 py-1.5 bg-[var(--espresso-brown)] text-[var(--crisp-white)] text-sm disabled:opacity-50"
+                  >
+                    {creatingStaff ? '...' : text.convertExistingConfirm}
+                  </button>
+                </div>
+              )}
               <button
-                onClick={createStaff}
+                onClick={() => createStaff()}
                 disabled={creatingStaff || !newStaffName.trim() || !newStaffPhone.trim()}
                 className="mt-3 px-4 py-2 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors text-sm disabled:opacity-50"
               >

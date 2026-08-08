@@ -43,6 +43,78 @@ function buildMessage(code, language) {
   return `Your SIGHT verification code is: ${code}${webOtpLine}`;
 }
 
+// Direct WhatsApp Business Platform (Meta Cloud API) delivery — sends from the business's own
+// WhatsApp Business Account, no third-party SMS aggregator involved. Requires a pre-approved
+// "Authentication" category template in Meta's WhatsApp Manager; see docs/whatsapp-otp-setup.md.
+const WHATSAPP_GRAPH_API_VERSION = (process.env.WHATSAPP_GRAPH_API_VERSION || 'v21.0').trim();
+const WHATSAPP_CLOUD_API_TOKEN = (process.env.WHATSAPP_CLOUD_API_TOKEN || '').trim();
+const WHATSAPP_PHONE_NUMBER_ID = (process.env.WHATSAPP_PHONE_NUMBER_ID || '').trim();
+const WHATSAPP_OTP_TEMPLATE_NAME = (process.env.WHATSAPP_OTP_TEMPLATE_NAME || '').trim();
+const WHATSAPP_OTP_TEMPLATE_LANG_EN = (process.env.WHATSAPP_OTP_TEMPLATE_LANG_EN || 'en_US').trim();
+const WHATSAPP_OTP_TEMPLATE_LANG_AR = (process.env.WHATSAPP_OTP_TEMPLATE_LANG_AR || 'ar').trim();
+// Meta requires the button's parameters to be included only when the approved template actually
+// has a "Copy Code" button — sending them for a button-less template (or omitting them for one
+// that has a button) is rejected by the API, so this must match what was actually approved.
+const WHATSAPP_OTP_TEMPLATE_HAS_BUTTON =
+  (process.env.WHATSAPP_OTP_TEMPLATE_HAS_BUTTON || '').trim().toLowerCase() === 'true';
+
+export const WHATSAPP_CLOUD_CONFIGURED = Boolean(
+  WHATSAPP_CLOUD_API_TOKEN && WHATSAPP_PHONE_NUMBER_ID && WHATSAPP_OTP_TEMPLATE_NAME
+);
+
+async function sendViaWhatsAppCloud({ phoneNumber, code, language }) {
+  if (!WHATSAPP_CLOUD_CONFIGURED) {
+    throw new Error('WhatsApp Cloud API is not configured');
+  }
+
+  const url = `https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
+  const templateLanguage = language === 'ar' ? WHATSAPP_OTP_TEMPLATE_LANG_AR : WHATSAPP_OTP_TEMPLATE_LANG_EN;
+
+  const components = [
+    {
+      type: 'body',
+      parameters: [{ type: 'text', text: code }],
+    },
+  ];
+  if (WHATSAPP_OTP_TEMPLATE_HAS_BUTTON) {
+    components.push({
+      type: 'button',
+      sub_type: 'url',
+      index: '0',
+      parameters: [{ type: 'text', text: code }],
+    });
+  }
+
+  const to = phoneNumber.startsWith('+') ? phoneNumber.slice(1) : phoneNumber;
+  const body = {
+    messaging_product: 'whatsapp',
+    to,
+    type: 'template',
+    template: {
+      name: WHATSAPP_OTP_TEMPLATE_NAME,
+      language: { code: templateLanguage },
+      components,
+    },
+  };
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${WHATSAPP_CLOUD_API_TOKEN}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => '');
+    throw new Error(`WhatsApp Cloud API OTP failed: HTTP ${resp.status} ${txt}`);
+  }
+
+  return true;
+}
+
 async function sendViaAuthentica({ phoneNumber, code, language, method: methodOverride }) {
   const url = (
     process.env.AUTHENTICA_SEND_URL ||
@@ -90,7 +162,7 @@ async function sendViaAuthentica({ phoneNumber, code, language, method: methodOv
   return true;
 }
 
-export async function sendOtpSms({ phoneNumber, code, language, method }) {
+async function sendViaFallbackProvider({ phoneNumber, code, language, method }) {
   if (provider === 'console') {
     const message = buildMessage(code, language);
     console.log(`[OTP] ${phoneNumber}: ${message}`);
@@ -102,4 +174,23 @@ export async function sendOtpSms({ phoneNumber, code, language, method }) {
   }
 
   throw new Error(`Unsupported SMS_PROVIDER: ${provider}`);
+}
+
+// Tries the business's own WhatsApp Business Account first (when configured), falling back to
+// the SMS_PROVIDER (Authentica, or console in dev) so a WhatsApp outage or an unconfigured
+// template never blocks sign-in.
+export async function sendOtpSms({ phoneNumber, code, language, method }) {
+  if (WHATSAPP_CLOUD_CONFIGURED) {
+    try {
+      await sendViaWhatsAppCloud({ phoneNumber, code, language });
+      return true;
+    } catch (whatsappError) {
+      console.warn(
+        `WhatsApp OTP delivery failed for ${phoneNumber}, falling back to ${provider}:`,
+        whatsappError?.message || whatsappError
+      );
+    }
+  }
+
+  return sendViaFallbackProvider({ phoneNumber, code, language, method });
 }

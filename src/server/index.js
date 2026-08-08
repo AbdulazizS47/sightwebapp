@@ -3737,7 +3737,7 @@ app.post('/api/admin/staff', async (c) => {
   if (unauthorized) return unauthorized;
   try {
     const adminUser = await getAdminSessionUserFromRequest(c);
-    const { name, phoneNumber } = await c.req.json();
+    const { name, phoneNumber, convertExisting } = await c.req.json();
     const trimmedName = String(name || '').trim();
     if (!trimmedName) return c.json({ error: 'Name is required' }, 400);
 
@@ -3745,13 +3745,44 @@ app.post('/api/admin/staff', async (c) => {
     if (!normalizedPhone) return c.json({ error: 'Invalid phone number' }, 400);
 
     const id = `user:${normalizedPhone}`;
-    const [existingRows] = await pool.execute('SELECT role FROM users WHERE id = ? LIMIT 1', [id]);
+    const [existingRows] = await pool.execute(
+      'SELECT role, name FROM users WHERE id = ? LIMIT 1',
+      [id]
+    );
     const existing = Array.isArray(existingRows) && existingRows[0] ? existingRows[0] : null;
+    const now = Date.now();
+
     if (existing) {
-      return c.json({ error: 'A user with this phone number already exists' }, 409);
+      if (existing.role === 'admin') {
+        return c.json({ error: 'This phone number belongs to an admin account' }, 409);
+      }
+      if (existing.role === 'cashier') {
+        return c.json({ error: 'This phone number is already a cashier account' }, 409);
+      }
+      // existing.role === 'user' (a customer/guest account) — refuse unless the admin has
+      // explicitly confirmed converting it, since it may carry real order/loyalty history.
+      if (!convertExisting) {
+        return c.json(
+          {
+            error: 'A customer account already exists with this phone number',
+            existingRole: existing.role,
+            existingName: existing.name || null,
+          },
+          409
+        );
+      }
+
+      await pool.execute(
+        `UPDATE users SET role = 'cashier', name = ?, active = 1, createdBy = ?, updatedAt = ? WHERE id = ?`,
+        [trimmedName, adminUser?.id || null, now, id]
+      );
+      return c.json({
+        success: true,
+        staff: { id, phoneNumber: normalizedPhone, name: trimmedName, active: true, createdAt: now, updatedAt: now },
+        converted: true,
+      });
     }
 
-    const now = Date.now();
     await pool.execute(
       `INSERT INTO users
        (id, phoneNumber, name, email, language, role, active, createdBy, createdAt, updatedAt)
