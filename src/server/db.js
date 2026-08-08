@@ -192,6 +192,9 @@ export async function initSchema() {
       email VARCHAR(255) NULL,
       language VARCHAR(16) NULL,
       role VARCHAR(32) NOT NULL,
+      active TINYINT(1) NOT NULL DEFAULT 1,
+      phoneVerified TINYINT(1) NOT NULL DEFAULT 1,
+      createdBy VARCHAR(64) NULL,
       createdAt BIGINT NOT NULL,
       updatedAt BIGINT NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -354,6 +357,13 @@ export async function initSchema() {
   await ensureColumn('ALTER TABLE items ADD COLUMN descriptionEn TEXT NULL');
   await ensureColumn('ALTER TABLE items ADD COLUMN descriptionAr TEXT NULL');
   await ensureColumn('ALTER TABLE inventory_items ADD COLUMN lowStockAlertSentAt BIGINT NULL');
+  // Cashier/staff accounts (sign in via the same phone + SMS OTP flow as everyone else)
+  await ensureColumn('ALTER TABLE users ADD COLUMN active TINYINT(1) NOT NULL DEFAULT 1');
+  await ensureColumn('ALTER TABLE users ADD COLUMN phoneVerified TINYINT(1) NOT NULL DEFAULT 1');
+  await ensureColumn('ALTER TABLE users ADD COLUMN createdBy VARCHAR(64) NULL');
+  await ensureColumn('ALTER TABLE orders ADD COLUMN createdByUserId VARCHAR(64) NULL');
+  await ensureIndex('CREATE INDEX idx_orders_createdByUserId ON orders(createdByUserId)');
+  await ensureIndex('CREATE INDEX idx_users_role ON users(role)');
   await ensureIndex('CREATE UNIQUE INDEX idx_orders_orderNumber ON orders(orderNumber)');
   await ensureIndex('CREATE INDEX idx_orders_date_display ON orders(dateKey, displayNumber)');
   await ensureIndex('CREATE INDEX idx_orders_createdAt ON orders(createdAt)');

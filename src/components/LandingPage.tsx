@@ -55,6 +55,10 @@ export function LandingPage({ onNavigate, onAdminNavigate, isAdmin, language }: 
   const text = content[language];
   const isRTL = language === 'ar';
   const hoursText = language === 'ar' ? hoursAr : hoursEn;
+  const buttonBaseClass =
+    'group w-full border-2 px-6 py-4 text-center transition-all duration-200 hover:-translate-y-1 hover:shadow-[0_14px_30px_rgba(0,0,0,0.12)] active:translate-y-0 active:shadow-[0_6px_14px_rgba(0,0,0,0.12)]';
+  const buttonContentClass = 'flex items-center justify-center gap-4';
+  const buttonLabelClass = 'flex-1 text-center tracking-[0.22em]';
 
   useEffect(() => {
     let mounted = true;
@@ -137,40 +141,50 @@ export function LandingPage({ onNavigate, onAdminNavigate, isAdmin, language }: 
             <>
               <button
                 onClick={() => onAdminNavigate('edit')}
-                className="w-full py-4 px-8 bg-[var(--matte-black)] text-[var(--crisp-white)] hover:bg-[var(--espresso-brown)] transition-colors duration-300 border-2 border-[var(--matte-black)] hover:border-[var(--espresso-brown)] text-center"
+                className={`${buttonBaseClass} bg-[var(--matte-black)] text-[var(--crisp-white)] border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:border-[var(--espresso-brown)]`}
               >
-                {text.adminEdit}
+                <span className={buttonContentClass}>
+                  <span className={buttonLabelClass}>{text.adminEdit}</span>
+                </span>
               </button>
               <button
                 onClick={() => onAdminNavigate('order')}
-                className="w-full py-4 px-8 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors duration-300 border-2 border-[var(--espresso-brown)] hover:border-[var(--matte-black)] text-center"
+                className={`${buttonBaseClass} bg-[var(--espresso-brown)] text-[var(--crisp-white)] border-[var(--espresso-brown)] hover:bg-[var(--matte-black)] hover:border-[var(--matte-black)]`}
               >
-                {text.adminOrder}
+                <span className={buttonContentClass}>
+                  <span className={buttonLabelClass}>{text.adminOrder}</span>
+                </span>
               </button>
             </>
           ) : (
             <>
               <button
                 onClick={() => onNavigate('menu')}
-                className="w-full py-4 px-8 bg-[var(--matte-black)] text-[var(--crisp-white)] hover:bg-[var(--espresso-brown)] transition-colors duration-300 border-2 border-[var(--matte-black)] hover:border-[var(--espresso-brown)] text-center"
+                className={`${buttonBaseClass} bg-[var(--matte-black)] text-[var(--crisp-white)] border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:border-[var(--espresso-brown)]`}
               >
-                {text.viewMenu}
+                <span className={buttonContentClass}>
+                  <span className={buttonLabelClass}>{text.viewMenu}</span>
+                </span>
               </button>
 
               <button
                 onClick={() => onNavigate('menu')}
-                className="w-full py-4 px-8 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors duration-300 border-2 border-[var(--espresso-brown)] hover:border-[var(--matte-black)] text-center"
+                className={`${buttonBaseClass} bg-[var(--espresso-brown)] text-[var(--crisp-white)] border-[var(--espresso-brown)] hover:bg-[var(--matte-black)] hover:border-[var(--matte-black)]`}
               >
-                {text.pickUp}
+                <span className={buttonContentClass}>
+                  <span className={buttonLabelClass}>{text.pickUp}</span>
+                </span>
               </button>
             </>
           )}
 
           <button
             onClick={() => onNavigate('contact')}
-            className="w-full py-4 px-8 bg-transparent text-[var(--matte-black)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] transition-colors duration-300 border-2 border-[var(--matte-black)] text-center"
+            className={`${buttonBaseClass} bg-transparent text-[var(--matte-black)] border-[var(--matte-black)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)]`}
           >
-            {text.contact}
+            <span className={buttonContentClass}>
+              <span className={buttonLabelClass}>{text.contact}</span>
+            </span>
           </button>
         </motion.div>
       </div>

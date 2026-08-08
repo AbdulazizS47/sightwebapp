@@ -148,7 +148,7 @@ const EXT_TO_IMAGE_CONTENT_TYPE = {
   '.heic': 'image/heic',
   '.heif': 'image/heif',
 };
-const UPLOAD_ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png']);
+const UPLOAD_ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_UPLOAD_IMAGE_BYTES = 1024 * 1024;
 const ORDER_VAT_RATE = 0.15;
 const LOYALTY_REWARD_CYCLE = 5;
@@ -264,7 +264,7 @@ async function getSessionUser(token) {
     const placeholders = lookupValues.map(() => '?').join(',');
     const [rows] = await pool.execute(
       `
-      SELECT u.id, u.phoneNumber, u.name, u.role, s.expiresAt
+      SELECT u.id, u.phoneNumber, u.name, u.role, u.active, s.expiresAt
       FROM sessions s
       JOIN users u ON u.id = s.userId
       WHERE s.token IN (${placeholders})
@@ -288,6 +288,7 @@ async function getSessionUser(token) {
       phoneNumber: String(row.phoneNumber),
       name: String(row.name),
       role: String(row.role),
+      active: row.active == null ? true : Boolean(Number(row.active)),
     };
     const effectiveExpiresAt = expiresAt ?? now + SESSION_TTL_MS;
     sessions.set(token, { user, expiresAt: effectiveExpiresAt });
@@ -724,6 +725,42 @@ function isOpenForSchedule(now, start, end, timeZone) {
   return nowMin >= startMin || nowMin < endMin;
 }
 
+// Single source of truth for "is the shop currently open", shared by the public
+// settings endpoint and the customer checkout guard below.
+async function getEffectiveOpenStatus() {
+  const openRaw = await getSetting('openStatus', DEFAULT_OPEN_STATUS ? 'true' : 'false');
+  const hoursEn = await getSetting('hoursEn', DEFAULT_HOURS_EN);
+  const hoursAr = await getSetting('hoursAr', DEFAULT_HOURS_AR);
+  const scheduleEnabledRaw = await getSetting(
+    'scheduleEnabled',
+    DEFAULT_SCHEDULE_ENABLED ? 'true' : 'false'
+  );
+  const hoursStart = await getSetting('hoursStart', DEFAULT_HOURS_START);
+  const hoursEnd = await getSetting('hoursEnd', DEFAULT_HOURS_END);
+  const timeZone = await getSetting('timeZone', DEFAULT_TIMEZONE);
+  const manualOpen = String(openRaw).trim().toLowerCase() === 'true';
+  const scheduleEnabled = String(scheduleEnabledRaw).trim().toLowerCase() === 'true';
+  const computedOpen = scheduleEnabled
+    ? isOpenForSchedule(new Date(), hoursStart, hoursEnd, timeZone)
+    : manualOpen;
+  const isOpen = typeof computedOpen === 'boolean' ? computedOpen : manualOpen;
+
+  return {
+    isOpen,
+    manualOpen,
+    schedule: {
+      enabled: scheduleEnabled,
+      start: hoursStart || DEFAULT_HOURS_START,
+      end: hoursEnd || DEFAULT_HOURS_END,
+      timeZone: timeZone || DEFAULT_TIMEZONE,
+    },
+    hours: {
+      en: hoursEn || DEFAULT_HOURS_EN,
+      ar: hoursAr || DEFAULT_HOURS_AR,
+    },
+  };
+}
+
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
 
 function normalizePublicHttpUrl(input) {
@@ -790,10 +827,11 @@ async function backfillLocalUploads() {
 async function migrateLegacyItemImages() {
   try {
     const [items] = await pool.execute(
-      `SELECT imageUrl FROM items
+      `SELECT id, imageUrl FROM items
        WHERE imageUrl IS NOT NULL AND imageUrl <> ''`
     );
     let migrated = 0;
+    const stillMissing = [];
 
     await Promise.all(
       items.map(async (item) => {
@@ -818,20 +856,36 @@ async function migrateLegacyItemImages() {
         );
         if (existingRows?.length) return;
 
+        // Best-effort recovery: fetch whatever is still reachable at the stored URL
+        // (typically another still-running instance's ephemeral disk cache) so it can be
+        // written into persistent storage before that copy disappears too. Once no running
+        // instance has the file anymore, this permanently cannot recover it and the item
+        // needs a manual re-upload — logged clearly below instead of failing silently.
         try {
-          const response = await fetchWithTimeout(sourceUrl, {
-            headers: { Accept: 'image/*' },
-          });
-          if (!response.ok) return;
+          const response = await fetchWithTimeout(sourceUrl, { headers: { Accept: 'image/*' } }, 8000);
+          if (!response.ok) {
+            stillMissing.push({ itemId: item.id, filename: safeName, reason: `HTTP ${response.status}` });
+            return;
+          }
 
           const contentType = String(response.headers.get('content-type') || '')
             .split(';')[0]
             .trim()
             .toLowerCase();
-          if (!contentType.startsWith('image/')) return;
+          if (!contentType.startsWith('image/')) {
+            stillMissing.push({
+              itemId: item.id,
+              filename: safeName,
+              reason: `unexpected content-type "${contentType || 'unknown'}"`,
+            });
+            return;
+          }
 
           const data = Buffer.from(await response.arrayBuffer());
-          if (!data.length || data.length > 5 * 1024 * 1024) return;
+          if (!data.length || data.length > 5 * 1024 * 1024) {
+            stillMissing.push({ itemId: item.id, filename: safeName, reason: 'empty or oversized response' });
+            return;
+          }
 
           const [result] = await pool.execute(
             `INSERT IGNORE INTO uploaded_images
@@ -840,14 +894,25 @@ async function migrateLegacyItemImages() {
             [safeName, contentType, data, data.length, Date.now()]
           );
           if (Number(result?.affectedRows || 0) > 0) migrated += 1;
-        } catch {
-          // Missing legacy files require a one-time re-upload by an admin.
+        } catch (fetchError) {
+          stillMissing.push({
+            itemId: item.id,
+            filename: safeName,
+            reason: fetchError?.message || 'fetch failed',
+          });
         }
       })
     );
 
     if (migrated > 0) {
       console.log(`Migrated ${migrated} legacy menu image(s) into persistent storage`);
+    }
+    if (stillMissing.length > 0) {
+      console.warn(
+        `${stillMissing.length} menu item image(s) could not be recovered into persistent storage ` +
+          `and will keep 404ing until re-uploaded by an admin:`,
+        stillMissing
+      );
     }
   } catch (error) {
     console.error('Failed to migrate legacy menu images', error);
@@ -866,6 +931,32 @@ async function requireAdmin(c) {
   if (ADMIN_TOKEN_ENABLED && headerToken === ADMIN_TOKEN) return null;
 
   return c.json({ error: 'Unauthorized' }, 401);
+}
+
+// Cashier or admin session, required for the cashier POS endpoints. Re-checks `active`
+// directly against the database (rather than trusting the in-memory session cache) so an
+// admin deactivating a cashier takes effect on that cashier's very next request.
+async function requireCashier(c) {
+  const authHeader = c.req.header('Authorization') || '';
+  const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  const sessionUser = await getSessionUser(bearer);
+  if (!sessionUser || (sessionUser.role !== 'cashier' && sessionUser.role !== 'admin')) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  if (sessionUser.role === 'cashier') {
+    const [rows] = await pool.execute('SELECT active FROM users WHERE id = ? LIMIT 1', [
+      sessionUser.id,
+    ]);
+    const active = Array.isArray(rows) && rows[0] ? Boolean(Number(rows[0].active)) : false;
+    if (!active) {
+      sessions.delete(bearer);
+      return c.json({ error: 'This staff account has been deactivated' }, 403);
+    }
+  }
+
+  c.set('cashierUser', sessionUser);
+  return null;
 }
 
 function requirePrintDevice(c) {
@@ -1251,37 +1342,8 @@ app.get('/', async (c) => {
 
 // Public settings (open status + hours)
 app.get('/api/settings/public', async (c) => {
-  const openRaw = await getSetting('openStatus', DEFAULT_OPEN_STATUS ? 'true' : 'false');
-  const hoursEn = await getSetting('hoursEn', DEFAULT_HOURS_EN);
-  const hoursAr = await getSetting('hoursAr', DEFAULT_HOURS_AR);
-  const scheduleEnabledRaw = await getSetting(
-    'scheduleEnabled',
-    DEFAULT_SCHEDULE_ENABLED ? 'true' : 'false'
-  );
-  const hoursStart = await getSetting('hoursStart', DEFAULT_HOURS_START);
-  const hoursEnd = await getSetting('hoursEnd', DEFAULT_HOURS_END);
-  const timeZone = await getSetting('timeZone', DEFAULT_TIMEZONE);
-  const manualOpen = String(openRaw).trim().toLowerCase() === 'true';
-  const scheduleEnabled = String(scheduleEnabledRaw).trim().toLowerCase() === 'true';
-  const computedOpen = scheduleEnabled
-    ? isOpenForSchedule(new Date(), hoursStart, hoursEnd, timeZone)
-    : manualOpen;
-  const isOpen = typeof computedOpen === 'boolean' ? computedOpen : manualOpen;
-  return c.json({
-    success: true,
-    isOpen,
-    manualOpen,
-    schedule: {
-      enabled: scheduleEnabled,
-      start: hoursStart || DEFAULT_HOURS_START,
-      end: hoursEnd || DEFAULT_HOURS_END,
-      timeZone: timeZone || DEFAULT_TIMEZONE,
-    },
-    hours: {
-      en: hoursEn || DEFAULT_HOURS_EN,
-      ar: hoursAr || DEFAULT_HOURS_AR,
-    },
-  });
+  const status = await getEffectiveOpenStatus();
+  return c.json({ success: true, ...status });
 });
 
 app.post('/api/auth/send-otp', async (c) => {
@@ -1655,6 +1717,35 @@ app.get('/api/admin/menu', async (c) => {
   } catch (e) {
     console.error('Error fetching admin menu', e);
     return c.json({ error: 'Failed to fetch admin menu' }, 500);
+  }
+});
+
+// Admin: list menu items whose imageUrl is set but not actually recoverable — i.e. missing
+// from persistent storage, so they will 404 (this is the state that causes "images not
+// loading" to recur after every deploy, since Railway's local disk cache is wiped on restart).
+app.get('/api/admin/menu/broken-images', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const [items] = await pool.execute(
+      `SELECT id, nameEn, imageUrl FROM items WHERE imageUrl IS NOT NULL AND imageUrl <> ''`
+    );
+    const broken = [];
+    for (const item of items) {
+      const filename = getUploadedFileName(item.imageUrl);
+      if (!filename) continue; // externally-hosted image URL, not our upload pipeline
+      const [rows] = await pool.execute(
+        'SELECT filename FROM uploaded_images WHERE filename = ? LIMIT 1',
+        [filename]
+      );
+      if (!rows.length) {
+        broken.push({ id: item.id, nameEn: item.nameEn, imageUrl: item.imageUrl, filename });
+      }
+    }
+    return c.json({ success: true, broken, count: broken.length });
+  } catch (e) {
+    console.error('Error checking for broken menu images', e);
+    return c.json({ error: 'Failed to check menu images' }, 500);
   }
 });
 
@@ -2848,14 +2939,412 @@ app.post('/api/orders/price-preview', async (c) => {
   }
 });
 
+// Core order-creation transaction, shared by the customer checkout endpoint and the
+// cashier POS endpoint. Business-rule failures (bad items, low stock, busy queue) are
+// thrown as `businessError` HTTP errors so respondOrderError() can pass their message
+// and status straight through without logging them as server bugs.
+async function createOrderInternal({
+  items,
+  paymentMethod,
+  effectiveUserId,
+  effectivePhoneNumber,
+  redeemReward,
+  discountCode,
+  language,
+  createdByUserId = null,
+  customerName = null,
+}) {
+  if (!items || items.length === 0) {
+    throw createHttpError(400, 'Order must contain at least one item', { businessError: true });
+  }
+
+  const effectiveLanguage = language === 'ar' ? 'ar' : 'en';
+  const { normalizedItems, ids, placeholders, canonicalItems } = await loadCanonicalOrderItems(
+    items,
+    effectiveLanguage
+  );
+  const pricing = await buildOrderPricing({
+    canonicalItems,
+    effectiveUserId,
+    effectiveLanguage,
+    redeemReward: Boolean(redeemReward),
+    discountCode,
+    strictDiscountCode: true,
+  });
+  const effectiveItems = pricing.effectiveItems;
+  const effectiveTotal = pricing.total;
+
+  const dateKey = await getCurrentDateKey();
+  const paymentMethodValue = paymentMethod || 'cash';
+
+  let displayNumber = null;
+  let orderNumber = null;
+  let orderId = null;
+  let createdAt = null;
+  let inventoryWarnings = null;
+  const lowStockNotifications = [];
+
+  const conn = await pool.getConnection();
+  let txOpen = false;
+  let finalizationLockHeld = false;
+  try {
+    await conn.beginTransaction();
+    txOpen = true;
+
+    const [usageRows] =
+      ids.length > 0
+        ? await conn.execute(
+            `SELECT menuItemId, inventoryItemId, consumeQty
+             FROM inventory_usage_rules
+             WHERE menuItemId IN (${placeholders})`,
+            ids
+          )
+        : [[]];
+
+    const rulesByMenuItemId = new Map();
+    for (const row of Array.isArray(usageRows) ? usageRows : []) {
+      const menuItemId = String(row.menuItemId || '');
+      const inventoryItemId = String(row.inventoryItemId || '');
+      const consumeQty = Number(row.consumeQty || 0);
+      if (!menuItemId || !inventoryItemId || !Number.isFinite(consumeQty) || consumeQty <= 0) {
+        continue;
+      }
+      const arr = rulesByMenuItemId.get(menuItemId) || [];
+      arr.push({ inventoryItemId, consumeQty });
+      rulesByMenuItemId.set(menuItemId, arr);
+    }
+
+    const seenUnlinked = new Set();
+    const unlinkedMenuItemIds = [];
+    const inventoryRequirements = new Map();
+    for (const item of normalizedItems) {
+      const rules = rulesByMenuItemId.get(item.id) || [];
+      if (rules.length === 0) {
+        if (!seenUnlinked.has(item.id)) {
+          seenUnlinked.add(item.id);
+          unlinkedMenuItemIds.push(item.id);
+        }
+        continue;
+      }
+
+      for (const rule of rules) {
+        const requiredQty = roundInventoryQty(Number(rule.consumeQty) * Number(item.quantity || 0));
+        if (!Number.isFinite(requiredQty) || requiredQty <= 0) continue;
+
+        const existing = inventoryRequirements.get(rule.inventoryItemId);
+        if (existing) {
+          existing.requiredQty = roundInventoryQty(existing.requiredQty + requiredQty);
+        } else {
+          inventoryRequirements.set(rule.inventoryItemId, {
+            inventoryItemId: rule.inventoryItemId,
+            requiredQty,
+          });
+        }
+      }
+    }
+
+    if (unlinkedMenuItemIds.length > 0) {
+      inventoryWarnings = { unlinkedMenuItemIds };
+    }
+
+    const lockedInventoryById = new Map();
+    if (inventoryRequirements.size > 0) {
+      const inventoryIds = Array.from(inventoryRequirements.keys());
+      const inventoryPlaceholders = inventoryIds.map(() => '?').join(',');
+      const [inventoryRows] = await conn.execute(
+        `SELECT id, nameEn, nameAr, unit, stockQty, lowStockThreshold, lowStockAlertSentAt, active
+         FROM inventory_items
+         WHERE id IN (${inventoryPlaceholders})
+         FOR UPDATE`,
+        inventoryIds
+      );
+
+      for (const row of Array.isArray(inventoryRows) ? inventoryRows : []) {
+        lockedInventoryById.set(String(row.id), row);
+      }
+
+      const missingInventoryIds = inventoryIds.filter((id) => !lockedInventoryById.has(id));
+      if (missingInventoryIds.length > 0) {
+        await conn.rollback();
+        txOpen = false;
+        throw createHttpError(500, 'Inventory configuration is invalid', {
+          businessError: true,
+          missingInventoryIds,
+          ...(inventoryWarnings ? { inventoryWarnings } : {}),
+        });
+      }
+
+      const insufficient = [];
+      for (const requirement of inventoryRequirements.values()) {
+        const inventoryRow = lockedInventoryById.get(requirement.inventoryItemId);
+        if (!inventoryRow) continue;
+        const stockQty = Number(inventoryRow.stockQty || 0);
+        const requiredQty = roundInventoryQty(requirement.requiredQty);
+        const shortageQty = roundInventoryQty(requiredQty - stockQty);
+        if (shortageQty > 0) {
+          insufficient.push({
+            inventoryItemId: String(inventoryRow.id),
+            nameEn: String(inventoryRow.nameEn || ''),
+            nameAr: String(inventoryRow.nameAr || ''),
+            unit: String(inventoryRow.unit || ''),
+            stockQty,
+            requiredQty,
+            shortageQty,
+            active: Boolean(Number(inventoryRow.active)),
+          });
+        }
+      }
+
+      if (insufficient.length > 0) {
+        await conn.rollback();
+        txOpen = false;
+        throw createHttpError(409, 'Insufficient inventory', {
+          businessError: true,
+          insufficient,
+          ...(inventoryWarnings ? { inventoryWarnings } : {}),
+        });
+      }
+    }
+
+    if (!(await acquireNamedLock(conn, ORDER_FINALIZATION_LOCK_NAME, 15))) {
+      await conn.rollback();
+      txOpen = false;
+      throw createHttpError(503, 'Order queue is busy. Please try again.', { businessError: true });
+    }
+    finalizationLockHeld = true;
+
+    const [counterRes] = await conn.execute(
+      'INSERT INTO order_counters (dateKey, currentNumber) VALUES (?, 1) ON DUPLICATE KEY UPDATE currentNumber = LAST_INSERT_ID(currentNumber + 1)',
+      [dateKey]
+    );
+    displayNumber = Number(counterRes.insertId || 1);
+    orderNumber = `${dateKey}-${String(displayNumber).padStart(3, '0')}`;
+    orderId = `order:${orderNumber}`;
+    createdAt = Date.now();
+
+    await conn.execute(
+      'INSERT INTO orders (id, orderNumber, displayNumber, dateKey, userId, phoneNumber, items, total, paymentMethod, status, completedAt, createdAt, discountCode, discountCodeGroup, discountAmount, createdByUserId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        orderId,
+        orderNumber,
+        displayNumber,
+        dateKey,
+        effectiveUserId,
+        effectivePhoneNumber,
+        JSON.stringify(effectiveItems),
+        effectiveTotal,
+        paymentMethodValue,
+        'received',
+        null,
+        createdAt,
+        pricing.discountCode,
+        pricing.discountCodeGroup,
+        pricing.discountCodeAmount > 0 ? pricing.discountCodeAmount : null,
+        createdByUserId,
+      ]
+    );
+
+    if (inventoryRequirements.size > 0) {
+      for (const requirement of inventoryRequirements.values()) {
+        const inventoryRow = lockedInventoryById.get(requirement.inventoryItemId);
+        if (!inventoryRow) continue;
+        const nextStockQty = roundInventoryQty(
+          Number(inventoryRow.stockQty || 0) - Number(requirement.requiredQty || 0)
+        );
+        const lowStockThreshold = Number(inventoryRow.lowStockThreshold || 0);
+        const existingLowStockAlertSentAt =
+          inventoryRow.lowStockAlertSentAt != null ? Number(inventoryRow.lowStockAlertSentAt) : null;
+        const nextLowStockAlertSentAt = shouldSendLowStockAlert({
+          active: inventoryRow.active,
+          stockQty: nextStockQty,
+          lowStockThreshold,
+          lowStockAlertSentAt: existingLowStockAlertSentAt,
+        })
+          ? createdAt
+          : existingLowStockAlertSentAt;
+
+        await conn.execute(
+          'UPDATE inventory_items SET stockQty = ?, lowStockAlertSentAt = ?, updatedAt = ? WHERE id = ?',
+          [nextStockQty, nextLowStockAlertSentAt, createdAt, requirement.inventoryItemId]
+        );
+        await conn.execute(
+          `INSERT INTO inventory_movements
+           (inventoryItemId, direction, qty, reason, orderId, note, createdByUserId, createdAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            requirement.inventoryItemId,
+            'out',
+            roundInventoryQty(requirement.requiredQty),
+            'sale',
+            orderId,
+            null,
+            createdByUserId,
+            createdAt,
+          ]
+        );
+
+        inventoryRow.stockQty = nextStockQty;
+        inventoryRow.lowStockAlertSentAt = nextLowStockAlertSentAt;
+
+        if (nextLowStockAlertSentAt === createdAt && existingLowStockAlertSentAt !== nextLowStockAlertSentAt) {
+          lowStockNotifications.push({
+            id: String(inventoryRow.id),
+            nameEn: String(inventoryRow.nameEn || ''),
+            nameAr: String(inventoryRow.nameAr || ''),
+            unit: String(inventoryRow.unit || ''),
+            stockQty: nextStockQty,
+            lowStockThreshold,
+          });
+        }
+      }
+    }
+
+    // Enqueue print job (best-effort)
+    try {
+      await conn.execute(
+        'INSERT INTO print_jobs (orderId, status, attempts, createdAt) VALUES (?, ?, ?, ?)',
+        [orderId, 'pending', 0, createdAt]
+      );
+    } catch (e) {
+      console.error('Failed to enqueue print job', e);
+    }
+
+    await conn.commit();
+    txOpen = false;
+  } catch (txError) {
+    if (txOpen) {
+      try {
+        await conn.rollback();
+      } catch (rollbackError) {
+        console.error('Failed to rollback order transaction', rollbackError);
+      }
+    }
+    throw txError;
+  } finally {
+    if (finalizationLockHeld) {
+      await releaseNamedLock(conn, ORDER_FINALIZATION_LOCK_NAME);
+    }
+    conn.release();
+  }
+
+  if (inventoryWarnings?.unlinkedMenuItemIds?.length) {
+    console.warn('Order created with unlinked inventory items', {
+      orderId,
+      menuItemIds: inventoryWarnings.unlinkedMenuItemIds,
+    });
+  }
+
+  // Loyalty: automatically enable after first order and accrue stamps
+  if (effectiveUserId) {
+    const nowTs = Date.now();
+    await pool.execute(
+      'INSERT INTO loyalty_accounts (userId, points, tier, enabled, enrollmentDate) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE enabled=1, enrollmentDate=IFNULL(enrollmentDate, VALUES(enrollmentDate))',
+      [effectiveUserId, 0, 'basic', 1, nowTs]
+    );
+    // Accrue loyalty points (1 per order). UI derives the 5-order reward cycle from this value.
+    await pool.execute(
+      'UPDATE loyalty_accounts SET enabled=1, points = points + 1 WHERE userId = ?',
+      [effectiveUserId]
+    );
+  }
+
+  const orderSummary = {
+    id: orderId,
+    orderNumber,
+    displayNumber,
+    createdAt,
+    userId: effectiveUserId,
+    userName: customerName,
+    phoneNumber: effectivePhoneNumber,
+    items: effectiveItems,
+    total: effectiveTotal,
+    subtotalExclVat: pricing.subtotalExclVat,
+    vatAmount: pricing.vatAmount,
+    totalWithVat: pricing.totalWithVat,
+    itemsTotal: pricing.itemsTotal,
+    rewardType: pricing.rewardType,
+    rewardDiscountAmount: pricing.rewardDiscountAmount,
+    discountCode: pricing.discountCode,
+    discountCodeName: pricing.discountCodeName,
+    discountCodeGroup: pricing.discountCodeGroup,
+    discountCodeAmount: pricing.discountCodeAmount,
+    paymentMethod: paymentMethodValue,
+    createdByUserId,
+    status: 'received',
+  };
+
+  return { orderId, orderNumber, displayNumber, orderSummary, inventoryWarnings, lowStockNotifications };
+}
+
+function respondOrderError(c, e, logLabel) {
+  const status = Number(e?.status) || 500;
+  const silent = e?.businessError === true || (status >= 400 && status < 500);
+  if (!silent) {
+    console.error(logLabel, e);
+    return c.json({ error: 'Failed to create order' }, 500);
+  }
+  const payload = { error: e?.message || 'Failed to create order' };
+  if (Array.isArray(e?.missing)) payload.missing = e.missing;
+  if (Array.isArray(e?.unavailable)) payload.unavailable = e.unavailable;
+  if (Array.isArray(e?.missingInventoryIds)) payload.missingInventoryIds = e.missingInventoryIds;
+  if (Array.isArray(e?.insufficient)) payload.insufficient = e.insufficient;
+  if (e?.inventoryWarnings) payload.inventoryWarnings = e.inventoryWarnings;
+  return c.json(payload, status);
+}
+
+function finalizeOrderResponse(result) {
+  const { orderId, orderSummary, inventoryWarnings, lowStockNotifications } = result;
+  const responsePayload = {
+    success: true,
+    orderId: result.orderId,
+    orderNumber: result.orderNumber,
+    displayNumber: result.displayNumber,
+    order: orderSummary,
+  };
+  if (inventoryWarnings) {
+    responsePayload.inventoryWarnings = inventoryWarnings;
+  }
+
+  sendNewOrderNotification(orderSummary).catch((notificationError) => {
+    console.error('Failed to send new order notification', {
+      orderId,
+      error: notificationError?.message || notificationError,
+    });
+  });
+  for (const item of lowStockNotifications) {
+    sendInventoryLowStockNotification(item).catch((notificationError) => {
+      console.error('Failed to send low stock notification after sale', {
+        orderId,
+        inventoryItemId: item.id,
+        error: notificationError?.message || notificationError,
+      });
+    });
+  }
+
+  return responsePayload;
+}
+
 app.post('/api/orders/create', async (c) => {
   try {
+    // Customer self-checkout only accepts orders during the configured working hours.
+    // The cashier POS endpoint below deliberately skips this check — staff ring up
+    // walk-in customers already in the shop regardless of the configured schedule.
+    const openStatus = await getEffectiveOpenStatus();
+    if (!openStatus.isOpen) {
+      return c.json(
+        {
+          error: 'The shop is currently closed for orders.',
+          shopClosed: true,
+          hours: openStatus.hours,
+          schedule: openStatus.schedule,
+        },
+        409
+      );
+    }
+
     const body = await c.req.json();
     const { items, paymentMethod, userId, phoneNumber, redeemReward, discountCode, language } =
       body;
-    if (!items || items.length === 0) {
-      return c.json({ error: 'Order must contain at least one item' }, 400);
-    }
 
     // Link order to session user if available
     const authHeader = c.req.header('Authorization') || '';
@@ -2863,363 +3352,76 @@ app.post('/api/orders/create', async (c) => {
     const sessionUser = await getSessionUser(token);
     const effectiveUserId = sessionUser?.id || userId || null;
     const effectivePhoneNumber = sessionUser?.phoneNumber || phoneNumber || null;
-    const effectiveLanguage = language === 'ar' ? 'ar' : 'en';
-    const { normalizedItems, ids, placeholders, canonicalItems } = await loadCanonicalOrderItems(
+
+    const result = await createOrderInternal({
       items,
-      effectiveLanguage
-    );
-    const pricing = await buildOrderPricing({
-      canonicalItems,
+      paymentMethod,
       effectiveUserId,
-      effectiveLanguage,
-      redeemReward: Boolean(redeemReward),
+      effectivePhoneNumber,
+      redeemReward,
       discountCode,
-      strictDiscountCode: true,
+      language,
+      customerName: sessionUser?.name || null,
     });
-    const effectiveItems = pricing.effectiveItems;
-    const effectiveTotal = pricing.total;
 
-    const dateKey = await getCurrentDateKey();
-    const paymentMethodValue = paymentMethod || 'cash';
-
-    let displayNumber = null;
-    let orderNumber = null;
-    let orderId = null;
-    let createdAt = null;
-    let inventoryWarnings = null;
-    const lowStockNotifications = [];
-
-    const conn = await pool.getConnection();
-    let txOpen = false;
-    let finalizationLockHeld = false;
-    try {
-      await conn.beginTransaction();
-      txOpen = true;
-
-      const [usageRows] =
-        ids.length > 0
-          ? await conn.execute(
-              `SELECT menuItemId, inventoryItemId, consumeQty
-               FROM inventory_usage_rules
-               WHERE menuItemId IN (${placeholders})`,
-              ids
-            )
-          : [[]];
-
-      const rulesByMenuItemId = new Map();
-      for (const row of Array.isArray(usageRows) ? usageRows : []) {
-        const menuItemId = String(row.menuItemId || '');
-        const inventoryItemId = String(row.inventoryItemId || '');
-        const consumeQty = Number(row.consumeQty || 0);
-        if (!menuItemId || !inventoryItemId || !Number.isFinite(consumeQty) || consumeQty <= 0) {
-          continue;
-        }
-        const arr = rulesByMenuItemId.get(menuItemId) || [];
-        arr.push({ inventoryItemId, consumeQty });
-        rulesByMenuItemId.set(menuItemId, arr);
-      }
-
-      const seenUnlinked = new Set();
-      const unlinkedMenuItemIds = [];
-      const inventoryRequirements = new Map();
-      for (const item of normalizedItems) {
-        const rules = rulesByMenuItemId.get(item.id) || [];
-        if (rules.length === 0) {
-          if (!seenUnlinked.has(item.id)) {
-            seenUnlinked.add(item.id);
-            unlinkedMenuItemIds.push(item.id);
-          }
-          continue;
-        }
-
-        for (const rule of rules) {
-          const requiredQty = roundInventoryQty(Number(rule.consumeQty) * Number(item.quantity || 0));
-          if (!Number.isFinite(requiredQty) || requiredQty <= 0) continue;
-
-          const existing = inventoryRequirements.get(rule.inventoryItemId);
-          if (existing) {
-            existing.requiredQty = roundInventoryQty(existing.requiredQty + requiredQty);
-          } else {
-            inventoryRequirements.set(rule.inventoryItemId, {
-              inventoryItemId: rule.inventoryItemId,
-              requiredQty,
-            });
-          }
-        }
-      }
-
-      if (unlinkedMenuItemIds.length > 0) {
-        inventoryWarnings = { unlinkedMenuItemIds };
-      }
-
-      const lockedInventoryById = new Map();
-      if (inventoryRequirements.size > 0) {
-        const inventoryIds = Array.from(inventoryRequirements.keys());
-        const inventoryPlaceholders = inventoryIds.map(() => '?').join(',');
-        const [inventoryRows] = await conn.execute(
-          `SELECT id, nameEn, nameAr, unit, stockQty, lowStockThreshold, lowStockAlertSentAt, active
-           FROM inventory_items
-           WHERE id IN (${inventoryPlaceholders})
-           FOR UPDATE`,
-          inventoryIds
-        );
-
-        for (const row of Array.isArray(inventoryRows) ? inventoryRows : []) {
-          lockedInventoryById.set(String(row.id), row);
-        }
-
-        const missingInventoryIds = inventoryIds.filter((id) => !lockedInventoryById.has(id));
-        if (missingInventoryIds.length > 0) {
-          await conn.rollback();
-          txOpen = false;
-          return c.json(
-            {
-              error: 'Inventory configuration is invalid',
-              missingInventoryIds,
-              ...(inventoryWarnings ? { inventoryWarnings } : {}),
-            },
-            500
-          );
-        }
-
-        const insufficient = [];
-        for (const requirement of inventoryRequirements.values()) {
-          const inventoryRow = lockedInventoryById.get(requirement.inventoryItemId);
-          if (!inventoryRow) continue;
-          const stockQty = Number(inventoryRow.stockQty || 0);
-          const requiredQty = roundInventoryQty(requirement.requiredQty);
-          const shortageQty = roundInventoryQty(requiredQty - stockQty);
-          if (shortageQty > 0) {
-            insufficient.push({
-              inventoryItemId: String(inventoryRow.id),
-              nameEn: String(inventoryRow.nameEn || ''),
-              nameAr: String(inventoryRow.nameAr || ''),
-              unit: String(inventoryRow.unit || ''),
-              stockQty,
-              requiredQty,
-              shortageQty,
-              active: Boolean(Number(inventoryRow.active)),
-            });
-          }
-        }
-
-        if (insufficient.length > 0) {
-          await conn.rollback();
-          txOpen = false;
-          return c.json(
-            {
-              error: 'Insufficient inventory',
-              insufficient,
-              ...(inventoryWarnings ? { inventoryWarnings } : {}),
-            },
-            409
-          );
-        }
-      }
-
-      if (!(await acquireNamedLock(conn, ORDER_FINALIZATION_LOCK_NAME, 15))) {
-        await conn.rollback();
-        txOpen = false;
-        return c.json({ error: 'Order queue is busy. Please try again.' }, 503);
-      }
-      finalizationLockHeld = true;
-
-      const [counterRes] = await conn.execute(
-        'INSERT INTO order_counters (dateKey, currentNumber) VALUES (?, 1) ON DUPLICATE KEY UPDATE currentNumber = LAST_INSERT_ID(currentNumber + 1)',
-        [dateKey]
-      );
-      displayNumber = Number(counterRes.insertId || 1);
-      orderNumber = `${dateKey}-${String(displayNumber).padStart(3, '0')}`;
-      orderId = `order:${orderNumber}`;
-      createdAt = Date.now();
-
-      await conn.execute(
-        'INSERT INTO orders (id, orderNumber, displayNumber, dateKey, userId, phoneNumber, items, total, paymentMethod, status, completedAt, createdAt, discountCode, discountCodeGroup, discountAmount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [
-          orderId,
-          orderNumber,
-          displayNumber,
-          dateKey,
-          effectiveUserId,
-          effectivePhoneNumber,
-          JSON.stringify(effectiveItems),
-          effectiveTotal,
-          paymentMethodValue,
-          'received',
-          null,
-          createdAt,
-          pricing.discountCode,
-          pricing.discountCodeGroup,
-          pricing.discountCodeAmount > 0 ? pricing.discountCodeAmount : null,
-        ]
-      );
-
-      if (inventoryRequirements.size > 0) {
-        for (const requirement of inventoryRequirements.values()) {
-          const inventoryRow = lockedInventoryById.get(requirement.inventoryItemId);
-          if (!inventoryRow) continue;
-          const nextStockQty = roundInventoryQty(
-            Number(inventoryRow.stockQty || 0) - Number(requirement.requiredQty || 0)
-          );
-          const lowStockThreshold = Number(inventoryRow.lowStockThreshold || 0);
-          const existingLowStockAlertSentAt =
-            inventoryRow.lowStockAlertSentAt != null ? Number(inventoryRow.lowStockAlertSentAt) : null;
-          const nextLowStockAlertSentAt = shouldSendLowStockAlert({
-            active: inventoryRow.active,
-            stockQty: nextStockQty,
-            lowStockThreshold,
-            lowStockAlertSentAt: existingLowStockAlertSentAt,
-          })
-            ? createdAt
-            : existingLowStockAlertSentAt;
-
-          await conn.execute(
-            'UPDATE inventory_items SET stockQty = ?, lowStockAlertSentAt = ?, updatedAt = ? WHERE id = ?',
-            [nextStockQty, nextLowStockAlertSentAt, createdAt, requirement.inventoryItemId]
-          );
-          await conn.execute(
-            `INSERT INTO inventory_movements
-             (inventoryItemId, direction, qty, reason, orderId, note, createdByUserId, createdAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              requirement.inventoryItemId,
-              'out',
-              roundInventoryQty(requirement.requiredQty),
-              'sale',
-              orderId,
-              null,
-              null,
-              createdAt,
-            ]
-          );
-
-          inventoryRow.stockQty = nextStockQty;
-          inventoryRow.lowStockAlertSentAt = nextLowStockAlertSentAt;
-
-          if (nextLowStockAlertSentAt === createdAt && existingLowStockAlertSentAt !== nextLowStockAlertSentAt) {
-            lowStockNotifications.push({
-              id: String(inventoryRow.id),
-              nameEn: String(inventoryRow.nameEn || ''),
-              nameAr: String(inventoryRow.nameAr || ''),
-              unit: String(inventoryRow.unit || ''),
-              stockQty: nextStockQty,
-              lowStockThreshold,
-            });
-          }
-        }
-      }
-
-      // Enqueue print job (best-effort)
-      try {
-        await conn.execute(
-          'INSERT INTO print_jobs (orderId, status, attempts, createdAt) VALUES (?, ?, ?, ?)',
-          [orderId, 'pending', 0, createdAt]
-        );
-      } catch (e) {
-        console.error('Failed to enqueue print job', e);
-      }
-
-      await conn.commit();
-      txOpen = false;
-    } catch (txError) {
-      if (txOpen) {
-        try {
-          await conn.rollback();
-        } catch (rollbackError) {
-          console.error('Failed to rollback order transaction', rollbackError);
-        }
-      }
-      throw txError;
-    } finally {
-      if (finalizationLockHeld) {
-        await releaseNamedLock(conn, ORDER_FINALIZATION_LOCK_NAME);
-      }
-      conn.release();
-    }
-
-    if (inventoryWarnings?.unlinkedMenuItemIds?.length) {
-      console.warn('Order created with unlinked inventory items', {
-        orderId,
-        menuItemIds: inventoryWarnings.unlinkedMenuItemIds,
-      });
-    }
-
-    // Loyalty: automatically enable after first order and accrue stamps
-    if (effectiveUserId) {
-      const nowTs = Date.now();
-      await pool.execute(
-        'INSERT INTO loyalty_accounts (userId, points, tier, enabled, enrollmentDate) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE enabled=1, enrollmentDate=IFNULL(enrollmentDate, VALUES(enrollmentDate))',
-        [effectiveUserId, 0, 'basic', 1, nowTs]
-      );
-      // Accrue loyalty points (1 per order). UI derives the 5-order reward cycle from this value.
-      await pool.execute(
-        'UPDATE loyalty_accounts SET enabled=1, points = points + 1 WHERE userId = ?',
-        [effectiveUserId]
-      );
-    }
-
-    const orderSummary = {
-      id: orderId,
-      orderNumber,
-      displayNumber,
-      createdAt,
-      userId: effectiveUserId,
-      userName: sessionUser?.name || null,
-      phoneNumber: effectivePhoneNumber,
-      items: effectiveItems,
-      total: effectiveTotal,
-      subtotalExclVat: pricing.subtotalExclVat,
-      vatAmount: pricing.vatAmount,
-      totalWithVat: pricing.totalWithVat,
-      itemsTotal: pricing.itemsTotal,
-      rewardType: pricing.rewardType,
-      rewardDiscountAmount: pricing.rewardDiscountAmount,
-      discountCode: pricing.discountCode,
-      discountCodeName: pricing.discountCodeName,
-      discountCodeGroup: pricing.discountCodeGroup,
-      discountCodeAmount: pricing.discountCodeAmount,
-      paymentMethod: paymentMethod || 'cash',
-      status: 'received',
-    };
-
-    const responsePayload = {
-      success: true,
-      orderId,
-      orderNumber,
-      displayNumber,
-      order: orderSummary,
-    };
-    if (inventoryWarnings) {
-      responsePayload.inventoryWarnings = inventoryWarnings;
-    }
-
-    sendNewOrderNotification(orderSummary).catch((notificationError) => {
-      console.error('Failed to send new order notification', {
-        orderId,
-        error: notificationError?.message || notificationError,
-      });
-    });
-    for (const item of lowStockNotifications) {
-      sendInventoryLowStockNotification(item).catch((notificationError) => {
-        console.error('Failed to send low stock notification after sale', {
-          orderId,
-          inventoryItemId: item.id,
-          error: notificationError?.message || notificationError,
-        });
-      });
-    }
-
-    return c.json(responsePayload);
+    return c.json(finalizeOrderResponse(result));
   } catch (e) {
-    if (Number(e?.status) >= 400 && Number(e?.status) < 500) {
-      const status = Number(e.status);
-      const payload = { error: e?.message || 'Failed to create order' };
-      if (Array.isArray(e?.missing)) payload.missing = e.missing;
-      if (Array.isArray(e?.unavailable)) payload.unavailable = e.unavailable;
-      return c.json(payload, status);
+    return respondOrderError(c, e, 'Error creating order');
+  }
+});
+
+// Cashier POS: staff-entered walk-in order. Never trusts a client-supplied userId —
+// an optional customer phone number is resolved/created server-side so a cashier can
+// only enroll the phone they typed, not spoof an arbitrary existing account.
+app.post('/api/cashier/orders/create', async (c) => {
+  const unauthorized = await requireCashier(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const cashierUser = c.get('cashierUser');
+    const body = await c.req.json();
+    const { items, paymentMethod, customerPhoneNumber, language } = body;
+
+    let effectiveUserId = null;
+    let customerName = null;
+    const rawPhone = String(customerPhoneNumber || '').trim();
+    let effectivePhoneNumber = null;
+    if (rawPhone) {
+      const normalizedPhone = normalizeKsaPhone(rawPhone);
+      if (!normalizedPhone) {
+        return c.json({ error: 'Invalid customer phone number' }, 400);
+      }
+      effectivePhoneNumber = normalizedPhone;
+      const customerId = `user:${normalizedPhone}`;
+      const now = Date.now();
+      const [existingRows] = await pool.execute('SELECT name FROM users WHERE id = ? LIMIT 1', [
+        customerId,
+      ]);
+      const existingCustomer = Array.isArray(existingRows) && existingRows[0] ? existingRows[0] : null;
+      customerName = String(existingCustomer?.name || '').trim() || 'Guest';
+      await pool.execute(
+        `INSERT INTO users (id, phoneNumber, name, email, language, role, phoneVerified, createdAt, updatedAt)
+         VALUES (?, ?, ?, NULL, NULL, 'user', 0, ?, ?)
+         ON DUPLICATE KEY UPDATE updatedAt = VALUES(updatedAt)`,
+        [customerId, normalizedPhone, customerName, now, now]
+      );
+      effectiveUserId = customerId;
     }
-    console.error('Error creating order', e);
-    return c.json({ error: 'Failed to create order' }, 500);
+
+    const result = await createOrderInternal({
+      items,
+      paymentMethod,
+      effectiveUserId,
+      effectivePhoneNumber,
+      redeemReward: false,
+      discountCode: null,
+      language,
+      createdByUserId: cashierUser?.id || null,
+      customerName,
+    });
+
+    return c.json(finalizeOrderResponse(result));
+  } catch (e) {
+    return respondOrderError(c, e, 'Error creating cashier order');
   }
 });
 
@@ -3502,6 +3704,137 @@ app.get('/api/admin/customers', async (c) => {
     return c.json({ error: 'Failed to load customers' }, 500);
   }
 });
+
+// Admin: manage cashier/staff accounts
+app.get('/api/admin/staff', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const [rows] = await pool.execute(
+      `SELECT id, phoneNumber, name, active, createdAt, updatedAt
+       FROM users WHERE role = 'cashier' ORDER BY createdAt DESC`
+    );
+    const staff = (Array.isArray(rows) ? rows : []).map((row) => ({
+      id: row.id,
+      phoneNumber: row.phoneNumber,
+      name: row.name,
+      active: Boolean(Number(row.active)),
+      createdAt: Number(row.createdAt),
+      updatedAt: Number(row.updatedAt),
+    }));
+    return c.json({ success: true, staff });
+  } catch (e) {
+    console.error('Error loading staff accounts', e);
+    return c.json({ error: 'Failed to load staff accounts' }, 500);
+  }
+});
+
+// Cashier accounts sign in the exact same way admin does: phone + SMS OTP
+// (see /api/auth/verify-otp). Creating a staff account here just grants that phone
+// number the 'cashier' role — there is no separate password/PIN to set.
+app.post('/api/admin/staff', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const adminUser = await getAdminSessionUserFromRequest(c);
+    const { name, phoneNumber } = await c.req.json();
+    const trimmedName = String(name || '').trim();
+    if (!trimmedName) return c.json({ error: 'Name is required' }, 400);
+
+    const normalizedPhone = normalizeKsaPhone(phoneNumber);
+    if (!normalizedPhone) return c.json({ error: 'Invalid phone number' }, 400);
+
+    const id = `user:${normalizedPhone}`;
+    const [existingRows] = await pool.execute('SELECT role FROM users WHERE id = ? LIMIT 1', [id]);
+    const existing = Array.isArray(existingRows) && existingRows[0] ? existingRows[0] : null;
+    if (existing) {
+      return c.json({ error: 'A user with this phone number already exists' }, 409);
+    }
+
+    const now = Date.now();
+    await pool.execute(
+      `INSERT INTO users
+       (id, phoneNumber, name, email, language, role, active, createdBy, createdAt, updatedAt)
+       VALUES (?, ?, ?, NULL, NULL, 'cashier', 1, ?, ?, ?)`,
+      [id, normalizedPhone, trimmedName, adminUser?.id || null, now, now]
+    );
+
+    return c.json({
+      success: true,
+      staff: { id, phoneNumber: normalizedPhone, name: trimmedName, active: true, createdAt: now, updatedAt: now },
+    });
+  } catch (e) {
+    console.error('Error creating staff account', e);
+    return c.json({ error: 'Failed to create staff account' }, 500);
+  }
+});
+
+app.put('/api/admin/staff/:id', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const id = c.req.param('id');
+    const [rows] = await pool.execute("SELECT * FROM users WHERE id = ? AND role = 'cashier' LIMIT 1", [
+      id,
+    ]);
+    const existing = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    if (!existing) return c.json({ error: 'Staff account not found' }, 404);
+
+    const { name, active } = await c.req.json();
+    const updates = [];
+    const params = [];
+
+    if (name !== undefined) {
+      const trimmedName = String(name || '').trim();
+      if (!trimmedName) return c.json({ error: 'Name cannot be empty' }, 400);
+      updates.push('name = ?');
+      params.push(trimmedName);
+    }
+    if (active !== undefined) {
+      updates.push('active = ?');
+      params.push(active ? 1 : 0);
+    }
+
+    if (updates.length === 0) {
+      return c.json({ error: 'No changes provided' }, 400);
+    }
+
+    const now = Date.now();
+    updates.push('updatedAt = ?');
+    params.push(now);
+    params.push(id);
+    await pool.execute(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+
+    // Deactivating a cashier should also end any session they're currently using.
+    if (active === false) {
+      await pool.execute('DELETE FROM sessions WHERE userId = ?', [id]);
+      for (const [token, entry] of sessions.entries()) {
+        if (entry?.user?.id === id) sessions.delete(token);
+      }
+    }
+
+    const [updatedRows] = await pool.execute(
+      'SELECT id, phoneNumber, name, active, createdAt, updatedAt FROM users WHERE id = ? LIMIT 1',
+      [id]
+    );
+    const updated = updatedRows[0];
+    return c.json({
+      success: true,
+      staff: {
+        id: updated.id,
+        phoneNumber: updated.phoneNumber,
+        name: updated.name,
+        active: Boolean(Number(updated.active)),
+        createdAt: Number(updated.createdAt),
+        updatedAt: Number(updated.updatedAt),
+      },
+    });
+  } catch (e) {
+    console.error('Error updating staff account', e);
+    return c.json({ error: 'Failed to update staff account' }, 500);
+  }
+});
+
 // Admin Orders: active list
 function mapOrderRow(row) {
   const items = Array.isArray(row.items) ? row.items : JSON.parse(row.items || '[]');

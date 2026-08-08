@@ -6,7 +6,7 @@ interface User {
   id: string;
   phoneNumber: string;
   name: string;
-  role?: 'admin' | 'user';
+  role?: 'admin' | 'cashier' | 'user';
 }
 
 interface Loyalty {

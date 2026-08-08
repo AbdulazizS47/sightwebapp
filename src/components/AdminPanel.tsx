@@ -82,6 +82,7 @@ export function AdminPanel({
   const [orders, setOrders] = useState<Order[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [brokenImageItems, setBrokenImageItems] = useState<{ id: string; nameEn: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
   const [bulkCompleting, setBulkCompleting] = useState(false);
@@ -106,6 +107,7 @@ export function AdminPanel({
       title: 'Admin Panel',
       ordersTab: 'Orders',
       menuTab: 'Menu',
+      brokenImagesWarning: 'These items have a missing image and need to be re-uploaded:',
       liveOrders: 'Live Orders',
       ordersHistory: 'Orders History',
       noOrders: 'No orders yet',
@@ -158,6 +160,7 @@ export function AdminPanel({
       title: 'لوحة الإدارة',
       ordersTab: 'الطلبات',
       menuTab: 'القائمة',
+      brokenImagesWarning: 'هذه العناصر تفتقد صورتها وتحتاج لإعادة الرفع:',
       liveOrders: 'الطلبات المباشرة',
       ordersHistory: 'سجل الطلبات',
       noOrders: 'لا توجد طلبات',
@@ -240,6 +243,7 @@ export function AdminPanel({
       loadOrders();
     } else {
       loadMenu();
+      loadBrokenImages();
     }
   }, [activeTab, mode]);
 
@@ -435,6 +439,20 @@ export function AdminPanel({
       alert(error instanceof Error ? error.message : text.completeAllError);
     } finally {
       setBulkCompleting(false);
+    }
+  };
+
+  const loadBrokenImages = async () => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/admin/menu/broken-images`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      const data = await response.json();
+      if (data.success) {
+        setBrokenImageItems(data.broken || []);
+      }
+    } catch (e) {
+      console.error('Error checking menu images', e);
     }
   };
 
@@ -1148,6 +1166,16 @@ export function AdminPanel({
           </div>
         ) : activeTab === 'menu' ? (
           <div className="space-y-4">
+            {brokenImageItems.length > 0 && (
+              <div className="border-2 border-red-600 p-4 bg-red-50 text-red-800 text-sm">
+                <div className="mb-2">{text.brokenImagesWarning}</div>
+                <ul className="list-disc pl-5 space-y-1">
+                  {brokenImageItems.map((item) => (
+                    <li key={item.id}>{item.nameEn || item.id}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {showNewCategory && (
               <div className="border-2 border-[var(--matte-black)] p-6 bg-[var(--crisp-white)]">
                 <h3 className="text-lg text-[var(--matte-black)] mb-4">{text.addCategory}</h3>

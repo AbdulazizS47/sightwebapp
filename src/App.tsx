@@ -9,10 +9,20 @@ import { OrderSuccessModal } from './components/OrderSuccessModal';
 import { OrderTrackingPage } from './components/OrderTrackingPage';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AdminLoginPage } from './components/AdminLoginPage';
+import { CashierPage } from './components/CashierPage';
 import { apiBaseUrl, enableHealthcheck } from './utils/api';
 import { ProfilePage } from './components/ProfilePage';
 
-type Page = 'landing' | 'menu' | 'contact' | 'dashboard' | 'admin-login' | 'profile' | 'order';
+type Page =
+  | 'landing'
+  | 'menu'
+  | 'contact'
+  | 'dashboard'
+  | 'admin-login'
+  | 'cashier'
+  | 'cashier-login'
+  | 'profile'
+  | 'order';
 type Language = 'en' | 'ar';
 type DrinkTemperature = 'hot' | 'iced';
 
@@ -31,8 +41,8 @@ interface User {
   id: string;
   phoneNumber: string;
   name: string;
-  // Add optional role for admin gating in dashboard
-  role?: 'admin' | 'user';
+  // Add optional role for admin/cashier gating
+  role?: 'admin' | 'cashier' | 'user';
 }
 
 export default function App() {
@@ -157,7 +167,7 @@ export default function App() {
     }
   };
 
-  const handleAuthSuccess = (userData: User & { role?: 'admin' | 'user' }, token: string) => {
+  const handleAuthSuccess = (userData: User & { role?: 'admin' | 'cashier' | 'user' }, token: string) => {
     setUser(userData as any);
     setSessionToken(token);
     localStorage.setItem('sessionToken', token);
@@ -171,20 +181,36 @@ export default function App() {
 
     if (pendingHash) {
       const isDashboardTarget = pendingHash.startsWith('#/dashboard');
+      const isCashierTarget = pendingHash.startsWith('#/cashier') && !pendingHash.startsWith('#/cashier-login');
       if (isDashboardTarget && userData?.role !== 'admin') {
         alert(language === 'en' ? 'Admin access only' : 'الدخول للمدير فقط');
         setCurrentPage('landing');
         setPendingHash(null);
         return;
       }
+      if (isCashierTarget && userData?.role !== 'cashier' && userData?.role !== 'admin') {
+        alert(language === 'en' ? 'Staff access only' : 'الدخول للموظفين فقط');
+        setCurrentPage('landing');
+        setPendingHash(null);
+        return;
+      }
       window.location.hash = pendingHash;
       if (isDashboardTarget) setCurrentPage('dashboard');
+      if (isCashierTarget) setCurrentPage('cashier');
       setPendingHash(null);
     }
     // Auto-route to dashboard when signing in from Admin Login page
     if (userData?.role === 'admin' && currentPage === 'admin-login') {
       setCurrentPage('dashboard');
       window.location.hash = '/dashboard';
+    }
+    // Auto-route to the POS screen when signing in from Cashier Login page
+    if (
+      (userData?.role === 'cashier' || userData?.role === 'admin') &&
+      currentPage === 'cashier-login'
+    ) {
+      setCurrentPage('cashier');
+      window.location.hash = '/cashier';
     }
 
     // Don't auto-navigate to admin - let admin edit menu directly
@@ -226,6 +252,17 @@ export default function App() {
         }
         return;
       }
+      if (page === 'cashier') {
+        const role = (user as any)?.role;
+        if (sessionToken && (role === 'cashier' || role === 'admin')) {
+          setCurrentPage('cashier');
+        } else {
+          setPendingHash(window.location.hash || '#/cashier');
+          setShowAuth(false);
+          setCurrentPage('cashier-login');
+        }
+        return;
+      }
       if (page === 'order') {
         const decoded = param ? decodeURIComponent(param) : '';
         if (!decoded) {
@@ -248,6 +285,7 @@ export default function App() {
         page === 'menu' ||
         page === 'contact' ||
         page === 'admin-login' ||
+        page === 'cashier-login' ||
         page === 'profile'
       ) {
         setCurrentPage(page as Page);
@@ -264,12 +302,24 @@ export default function App() {
     window.location.hash = `/order/${encodeURIComponent(orderId)}`;
   };
 
-  const handleNavigate = (page: 'menu' | 'contact' | 'dashboard' | 'admin-login' | 'profile') => {
+  const handleNavigate = (
+    page: 'menu' | 'contact' | 'dashboard' | 'admin-login' | 'cashier' | 'cashier-login' | 'profile'
+  ) => {
     if (page === 'dashboard' && (!sessionToken || (user as any)?.role !== 'admin')) {
       setPendingHash('#/dashboard');
       setShowAuth(false);
       setCurrentPage('admin-login');
       window.location.hash = '/admin-login';
+      return;
+    }
+    if (
+      page === 'cashier' &&
+      (!sessionToken || !['cashier', 'admin'].includes((user as any)?.role))
+    ) {
+      setPendingHash('#/cashier');
+      setShowAuth(false);
+      setCurrentPage('cashier-login');
+      window.location.hash = '/cashier-login';
       return;
     }
     if (page === 'menu') {
@@ -345,6 +395,14 @@ export default function App() {
                   Dashboard
                 </button>
               )}
+              {user.role === 'cashier' && (
+                <button
+                  onClick={() => handleNavigate('cashier')}
+                  className="text-[var(--matte-black)] hover:text-[var(--espresso-brown)] transition-colors text-[11px]"
+                >
+                  {language === 'en' ? 'New Order' : 'طلب جديد'}
+                </button>
+              )}
               <button
                 onClick={handleLogout}
                 className="text-[var(--matte-black)] hover:text-[var(--espresso-brown)] transition-colors"
@@ -415,6 +473,22 @@ export default function App() {
         )}
 
         {currentPage === 'admin-login' && (
+          <AdminLoginPage onBack={handleBack} onSuccess={handleAuthSuccess} language={language} />
+        )}
+
+        {currentPage === 'cashier' &&
+          sessionToken &&
+          user &&
+          (user.role === 'cashier' || user.role === 'admin') && (
+            <CashierPage
+              sessionToken={sessionToken}
+              cashierUser={{ id: user.id, name: user.name, phoneNumber: user.phoneNumber }}
+              language={language}
+              onLogout={handleLogout}
+            />
+          )}
+
+        {currentPage === 'cashier-login' && (
           <AdminLoginPage onBack={handleBack} onSuccess={handleAuthSuccess} language={language} />
         )}
       </div>

@@ -19,26 +19,26 @@ export function AdminLoginPage({ onBack, onSuccess, language }: AdminLoginPagePr
 
   const content = {
     en: {
-      title: 'Admin Sign In',
+      title: 'Staff Sign In',
       back: 'Back',
-      phoneLabel: 'Admin Phone Number',
+      phoneLabel: 'Phone Number',
       phonePlaceholder: '+966 5X XXX XXXX',
       sendOtp: 'Send Code',
       otpLabel: 'Verification Code',
       otpPlaceholder: 'Enter 6-digit code',
       verify: 'Verify',
-      note: 'Use the configured admin phone number to access the dashboard.',
+      note: 'Sign in with your registered admin or cashier phone number.',
     },
     ar: {
-      title: 'تسجيل دخول المدير',
+      title: 'تسجيل دخول الموظفين',
       back: 'رجوع',
-      phoneLabel: 'رقم هاتف المدير',
+      phoneLabel: 'رقم الهاتف',
       phonePlaceholder: '+966 5X XXX XXXX',
       sendOtp: 'إرسال الرمز',
       otpLabel: 'رمز التحقق',
       otpPlaceholder: 'أدخل رمز من 6 أرقام',
       verify: 'تحقق',
-      note: 'استخدم رقم هاتف المدير المهيأ للوصول إلى لوحة التحكم.',
+      note: 'سجّل الدخول برقم هاتف المدير أو الكاشير المسجل.',
     },
   } as const;
 

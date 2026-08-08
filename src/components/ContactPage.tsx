@@ -1,4 +1,4 @@
-import { ArrowLeft, Instagram, MapPin, MessageCircle } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Instagram, MapPin, MessageCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiBaseUrl } from '../utils/api';
 
@@ -46,6 +46,13 @@ export function ContactPage({ onBack, language }: ContactPageProps) {
 
   const text = content[language];
   const isRTL = language === 'ar';
+  const cardClass =
+    'group block border-2 border-transparent bg-[var(--cool-gray)] p-6 transition-all duration-200 hover:-translate-y-1 hover:border-[var(--matte-black)] hover:bg-[var(--crisp-white)] hover:shadow-[0_16px_32px_rgba(0,0,0,0.08)] active:translate-y-0';
+  const cardRowClass = `flex items-start justify-between gap-4 ${isRTL ? 'flex-row-reverse' : ''}`;
+  const cardIconClass =
+    'mt-1 flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full border border-[var(--matte-black)]/10 bg-[var(--crisp-white)] transition-colors duration-200 group-hover:bg-[var(--matte-black)] group-hover:text-[var(--crisp-white)]';
+  const cardActionClass =
+    'mt-1 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border border-[var(--matte-black)]/15 bg-[var(--crisp-white)] text-[var(--matte-black)] transition-all duration-200 group-hover:border-[var(--matte-black)] group-hover:bg-[var(--matte-black)] group-hover:text-[var(--crisp-white)]';
 
   useEffect(() => {
     let mounted = true;
@@ -84,52 +91,82 @@ export function ContactPage({ onBack, language }: ContactPageProps) {
         <div className="space-y-6">
           {/* Instagram */}
           <a
-            className="block p-6 bg-[var(--cool-gray)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] transition-colors group"
+            className={cardClass}
             href={text.instagramUrl}
             target="_blank"
             rel="noreferrer"
           >
-            <div className="flex items-start gap-4">
-              <Instagram size={24} className="flex-shrink-0 mt-1" />
-              <div>
-                <h3 className="mb-2">{text.instagram}</h3>
-                <p className="opacity-70" dir="ltr">
-                  {text.instagramHandle}
-                </p>
+            <div className={cardRowClass}>
+              <div className={`flex items-start gap-4 ${isRTL ? 'flex-row-reverse text-right' : ''}`}>
+                <div className={cardIconClass}>
+                  <Instagram size={24} />
+                </div>
+                <div>
+                  <h3 className="mb-2 text-xl text-[var(--matte-black)]">{text.instagram}</h3>
+                  <p className="text-xs uppercase tracking-[0.22em] text-[var(--espresso-brown)]">
+                    {language === 'ar' ? 'افتح الرابط' : 'Open link'}
+                  </p>
+                  <p className="mt-2 opacity-70" dir="ltr">
+                    {text.instagramHandle}
+                  </p>
+                </div>
+              </div>
+              <div className={cardActionClass}>
+                <ArrowUpRight size={18} className={isRTL ? 'rotate-180' : ''} />
               </div>
             </div>
           </a>
 
           {/* WhatsApp */}
           <a
-            className="block p-6 bg-[var(--cool-gray)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] transition-colors group"
+            className={cardClass}
             href={text.whatsappUrl}
             target="_blank"
             rel="noreferrer"
           >
-            <div className="flex items-start gap-4">
-              <MessageCircle size={24} className="flex-shrink-0 mt-1" />
-              <div>
-                <h3 className="mb-2">{text.whatsapp}</h3>
-                <p className="opacity-70" dir="ltr">
-                  {text.whatsappLabel}
-                </p>
+            <div className={cardRowClass}>
+              <div className={`flex items-start gap-4 ${isRTL ? 'flex-row-reverse text-right' : ''}`}>
+                <div className={cardIconClass}>
+                  <MessageCircle size={24} />
+                </div>
+                <div>
+                  <h3 className="mb-2 text-xl text-[var(--matte-black)]">{text.whatsapp}</h3>
+                  <p className="text-xs uppercase tracking-[0.22em] text-[var(--espresso-brown)]">
+                    {language === 'ar' ? 'ابدأ المحادثة' : 'Start chat'}
+                  </p>
+                  <p className="mt-2 opacity-70" dir="ltr">
+                    {text.whatsappLabel}
+                  </p>
+                </div>
+              </div>
+              <div className={cardActionClass}>
+                <ArrowUpRight size={18} className={isRTL ? 'rotate-180' : ''} />
               </div>
             </div>
           </a>
 
           {/* Location */}
           <a
-            className="block p-6 bg-[var(--cool-gray)] hover:bg-[var(--matte-black)] hover:text-[var(--crisp-white)] transition-colors group"
+            className={cardClass}
             href={text.locationUrl}
             target="_blank"
             rel="noreferrer"
           >
-            <div className="flex items-start gap-4">
-              <MapPin size={24} className="flex-shrink-0 mt-1" />
-              <div>
-                <h3 className="mb-2">{text.location}</h3>
-                <p className="opacity-70">{text.address}</p>
+            <div className={cardRowClass}>
+              <div className={`flex items-start gap-4 ${isRTL ? 'flex-row-reverse text-right' : ''}`}>
+                <div className={cardIconClass}>
+                  <MapPin size={24} />
+                </div>
+                <div>
+                  <h3 className="mb-2 text-xl text-[var(--matte-black)]">{text.location}</h3>
+                  <p className="text-xs uppercase tracking-[0.22em] text-[var(--espresso-brown)]">
+                    {language === 'ar' ? 'افتح الخريطة' : 'Open map'}
+                  </p>
+                  <p className="mt-2 opacity-70">{text.address}</p>
+                </div>
+              </div>
+              <div className={cardActionClass}>
+                <ArrowUpRight size={18} className={isRTL ? 'rotate-180' : ''} />
               </div>
             </div>
           </a>

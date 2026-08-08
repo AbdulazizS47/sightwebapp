@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Users, ClipboardList, Utensils, RefreshCw, Package } from 'lucide-react';
+import { ArrowLeft, Users, ClipboardList, Utensils, RefreshCw, Package, UserCog } from 'lucide-react';
 import { AdminPanel } from './AdminPanel';
 import { AdminInventoryPanel } from './AdminInventoryPanel';
 import { allowSeedMenuTools, apiBaseUrl } from '../utils/api';
@@ -10,7 +10,16 @@ interface AdminDashboardProps {
   language: 'en' | 'ar';
 }
 
-type Tab = 'live-orders' | 'history' | 'menu' | 'inventory' | 'customers' | 'settings';
+type Tab = 'live-orders' | 'history' | 'menu' | 'inventory' | 'customers' | 'staff' | 'settings';
+
+interface StaffAccount {
+  id: string;
+  phoneNumber: string;
+  name: string;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
 
 interface CustomerSummary {
   customerKey?: string | null;
@@ -48,6 +57,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
           tab === 'menu' ||
           tab === 'inventory' ||
           tab === 'customers' ||
+          tab === 'staff' ||
           tab === 'settings'
         ) {
           setActiveTab(tab);
@@ -69,6 +79,15 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
   const [customers, setCustomers] = useState<CustomerSummary[]>([]);
   const [customerQuery, setCustomerQuery] = useState('');
   const [stats, setStats] = useState<OrderStats | null>(null);
+  const [staff, setStaff] = useState<StaffAccount[]>([]);
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [staffError, setStaffError] = useState('');
+  const [newStaffName, setNewStaffName] = useState('');
+  const [newStaffPhone, setNewStaffPhone] = useState('');
+  const [creatingStaff, setCreatingStaff] = useState(false);
+  const [editingStaffId, setEditingStaffId] = useState<string | null>(null);
+  const [editStaffName, setEditStaffName] = useState('');
+  const [savingStaffId, setSavingStaffId] = useState<string | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [isOpenSetting, setIsOpenSetting] = useState(true);
   const [computedOpenSetting, setComputedOpenSetting] = useState(true);
@@ -87,7 +106,22 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       menuTab: 'Menu',
       inventoryTab: 'Inventory',
       customersTab: 'Customers',
+      staffTab: 'Staff',
       settingsTab: 'Settings',
+      staffName: 'Name',
+      staffPhone: 'Phone Number',
+      staffHint: 'The cashier signs in with this phone number using a normal SMS code, just like admin.',
+      addStaff: 'Add Cashier',
+      status: 'Status',
+      activeStatus: 'Active',
+      inactiveStatus: 'Deactivated',
+      edit: 'Edit',
+      deactivate: 'Deactivate',
+      activate: 'Activate',
+      saveChanges: 'Save',
+      cancel: 'Cancel',
+      noStaff: 'No cashier accounts yet',
+      staffCreated: 'Cashier account created',
       refresh: 'Refresh',
       cleanupSeed: 'Remove Seed Items',
       openStatus: 'Open Status',
@@ -130,7 +164,22 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       menuTab: 'القائمة',
       inventoryTab: 'المخزون',
       customersTab: 'العملاء',
+      staffTab: 'الموظفون',
       settingsTab: 'الإعدادات',
+      staffName: 'الاسم',
+      staffPhone: 'رقم الهاتف',
+      staffHint: 'يسجل الكاشير الدخول بهذا الرقم عبر رمز SMS عادي، تمامًا مثل المدير.',
+      addStaff: 'إضافة كاشير',
+      status: 'الحالة',
+      activeStatus: 'مفعل',
+      inactiveStatus: 'موقوف',
+      edit: 'تعديل',
+      deactivate: 'إيقاف',
+      activate: 'تفعيل',
+      saveChanges: 'حفظ',
+      cancel: 'إلغاء',
+      noStaff: 'لا يوجد حسابات كاشير بعد',
+      staffCreated: 'تم إنشاء حساب الكاشير',
       refresh: 'تحديث',
       cleanupSeed: 'حذف العناصر الأولية',
       openStatus: 'حالة المتجر',
@@ -190,6 +239,119 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
     }
   };
 
+  const loadStaff = async () => {
+    setStaffLoading(true);
+    setStaffError('');
+    try {
+      const res = await fetch(`${apiBaseUrl}/admin/staff`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStaff(data.staff || []);
+      } else {
+        setStaffError(data.error || 'Failed to load staff accounts');
+      }
+    } catch (e) {
+      console.error('Error loading staff accounts', e);
+      setStaffError('Failed to load staff accounts');
+    } finally {
+      setStaffLoading(false);
+    }
+  };
+
+  const createStaff = async () => {
+    setStaffError('');
+    if (!newStaffName.trim() || !newStaffPhone.trim()) return;
+    setCreatingStaff(true);
+    try {
+      const res = await fetch(`${apiBaseUrl}/admin/staff`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({
+          name: newStaffName.trim(),
+          phoneNumber: newStaffPhone.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setStaffError(data.error || 'Failed to create staff account');
+        return;
+      }
+      setNewStaffName('');
+      setNewStaffPhone('');
+      await loadStaff();
+    } catch (e) {
+      console.error('Error creating staff account', e);
+      setStaffError('Failed to create staff account');
+    } finally {
+      setCreatingStaff(false);
+    }
+  };
+
+  const startEditStaff = (member: StaffAccount) => {
+    setEditingStaffId(member.id);
+    setEditStaffName(member.name);
+    setStaffError('');
+  };
+
+  const saveStaffEdits = async (id: string) => {
+    setSavingStaffId(id);
+    setStaffError('');
+    try {
+      const payload: Record<string, unknown> = { name: editStaffName.trim() };
+      const res = await fetch(`${apiBaseUrl}/admin/staff/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setStaffError(data.error || 'Failed to update staff account');
+        return;
+      }
+      setEditingStaffId(null);
+      await loadStaff();
+    } catch (e) {
+      console.error('Error updating staff account', e);
+      setStaffError('Failed to update staff account');
+    } finally {
+      setSavingStaffId(null);
+    }
+  };
+
+  const toggleStaffActive = async (member: StaffAccount) => {
+    setSavingStaffId(member.id);
+    setStaffError('');
+    try {
+      const res = await fetch(`${apiBaseUrl}/admin/staff/${member.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ active: !member.active }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setStaffError(data.error || 'Failed to update staff account');
+        return;
+      }
+      await loadStaff();
+    } catch (e) {
+      console.error('Error updating staff account', e);
+      setStaffError('Failed to update staff account');
+    } finally {
+      setSavingStaffId(null);
+    }
+  };
+
   const loadSettings = async () => {
     setSettingsLoading(true);
     try {
@@ -236,6 +398,12 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
   }, [activeTab]);
 
   useEffect(() => {
+    if (activeTab === 'staff') {
+      loadStaff();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
     if (activeTab === 'settings') {
       loadSettings();
     }
@@ -273,6 +441,16 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
             </button>
             <h1 className="text-lg sm:text-xl text-[var(--matte-black)]">{text.title}</h1>
           </div>
+          {activeTab === 'staff' && (
+            <button
+              onClick={loadStaff}
+              disabled={staffLoading}
+              className="text-[var(--matte-black)] hover:text-[var(--espresso-brown)] transition-colors disabled:opacity-50"
+              aria-label={text.refresh}
+            >
+              <RefreshCw size={24} className={staffLoading ? 'animate-spin' : ''} />
+            </button>
+          )}
           {activeTab === 'customers' && (
             <button
               onClick={loadCustomers}
@@ -412,6 +590,12 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
             onClick={() => setTab('customers')}
           >
             <Users size={16} /> {text.customersTab}
+          </button>
+          <button
+            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 whitespace-nowrap shrink-0 ${activeTab === 'staff' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
+            onClick={() => setTab('staff')}
+          >
+            <UserCog size={16} /> {text.staffTab}
           </button>
           <button
             className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 whitespace-nowrap shrink-0 ${activeTab === 'settings' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
@@ -559,6 +743,133 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
                         </td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+        {activeTab === 'staff' && (
+          <div>
+            <div className="border-2 border-[var(--matte-black)] p-4 bg-[var(--crisp-white)] mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm text-[var(--matte-black)] opacity-70">
+                    {text.staffName}
+                  </label>
+                  <input
+                    value={newStaffName}
+                    onChange={(e) => setNewStaffName(e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border-2 border-[var(--matte-black)] text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-[var(--matte-black)] opacity-70">
+                    {text.staffPhone}
+                  </label>
+                  <input
+                    value={newStaffPhone}
+                    onChange={(e) => setNewStaffPhone(e.target.value)}
+                    placeholder="05XXXXXXXX"
+                    dir="ltr"
+                    className="w-full mt-1 px-3 py-2 border-2 border-[var(--matte-black)] text-sm"
+                  />
+                </div>
+              </div>
+              <div className="text-xs text-[var(--matte-black)] opacity-60 mt-2">{text.staffHint}</div>
+              {staffError && <div className="text-red-600 text-sm mt-3">{staffError}</div>}
+              <button
+                onClick={createStaff}
+                disabled={creatingStaff || !newStaffName.trim() || !newStaffPhone.trim()}
+                className="mt-3 px-4 py-2 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors text-sm disabled:opacity-50"
+              >
+                {creatingStaff ? '...' : text.addStaff}
+              </button>
+            </div>
+
+            {staff.length === 0 ? (
+              <div className="text-[var(--matte-black)]">{staffLoading ? '...' : text.noStaff}</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full border-2 border-[var(--matte-black)]">
+                  <thead>
+                    <tr className="bg-[var(--matte-black)] text-[var(--crisp-white)]">
+                      <th className="p-2 border-b-2 border-[var(--matte-black)] text-left">
+                        {text.staffName}
+                      </th>
+                      <th className="p-2 border-b-2 border-[var(--matte-black)] text-left">
+                        {text.staffPhone}
+                      </th>
+                      <th className="p-2 border-b-2 border-[var(--matte-black)] text-left">
+                        {text.status}
+                      </th>
+                      <th className="p-2 border-b-2 border-[var(--matte-black)] text-left" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {staff.map((member) => {
+                      const isEditing = editingStaffId === member.id;
+                      const isSaving = savingStaffId === member.id;
+                      return (
+                        <tr
+                          key={member.id}
+                          className="odd:bg-[var(--crisp-white)] even:bg-[#f7f7f7] align-top"
+                        >
+                          <td className="p-2 border-b border-[var(--matte-black)]">
+                            {isEditing ? (
+                              <input
+                                value={editStaffName}
+                                onChange={(e) => setEditStaffName(e.target.value)}
+                                className="w-full px-2 py-1 border-2 border-[var(--matte-black)] text-sm"
+                              />
+                            ) : (
+                              member.name
+                            )}
+                          </td>
+                          <td className="p-2 border-b border-[var(--matte-black)]" dir="ltr">
+                            {member.phoneNumber}
+                          </td>
+                          <td className="p-2 border-b border-[var(--matte-black)]">
+                            {member.active ? text.activeStatus : text.inactiveStatus}
+                          </td>
+                          <td className="p-2 border-b border-[var(--matte-black)]">
+                            {isEditing ? (
+                              <div className="flex gap-2 min-w-[180px]">
+                                <button
+                                  onClick={() => saveStaffEdits(member.id)}
+                                  disabled={isSaving || !editStaffName.trim()}
+                                  className="px-3 py-1 bg-[var(--espresso-brown)] text-[var(--crisp-white)] text-sm disabled:opacity-50"
+                                >
+                                  {isSaving ? '...' : text.saveChanges}
+                                </button>
+                                <button
+                                  onClick={() => setEditingStaffId(null)}
+                                  className="px-3 py-1 border-2 border-[var(--matte-black)] text-sm"
+                                >
+                                  {text.cancel}
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => startEditStaff(member)}
+                                  className="px-3 py-1 border-2 border-[var(--matte-black)] text-sm hover:bg-[var(--cool-gray)]"
+                                >
+                                  {text.edit}
+                                </button>
+                                <button
+                                  onClick={() => toggleStaffActive(member)}
+                                  disabled={isSaving}
+                                  className="px-3 py-1 border-2 border-[var(--matte-black)] text-sm hover:bg-[var(--cool-gray)] disabled:opacity-50"
+                                >
+                                  {isSaving ? '...' : member.active ? text.deactivate : text.activate}
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -74,6 +74,8 @@ export function CartModal({
   const [loyalty, setLoyalty] = useState<{ enabled: boolean; stamps: number } | null>(null);
   const [redeemReward, setRedeemReward] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [shopOpen, setShopOpen] = useState(true);
+  const [shopHours, setShopHours] = useState<{ en: string; ar: string } | null>(null);
   const paymentMethod = 'pickup' as const;
 
   const content = {
@@ -104,6 +106,8 @@ export function CartModal({
       cancelButton: 'Cancel',
       hot: 'Hot',
       iced: 'Iced',
+      shopClosedTitle: "We're closed right now",
+      shopClosedMessage: 'Orders open again during our working hours:',
     },
     ar: {
       cart: 'سلتك',
@@ -132,6 +136,8 @@ export function CartModal({
       cancelButton: 'إلغاء',
       hot: 'ساخن',
       iced: 'بارد',
+      shopClosedTitle: 'نحن مغلقون الآن',
+      shopClosedMessage: 'يمكنك الطلب مجددًا خلال ساعات العمل:',
     },
   };
 
@@ -145,6 +151,7 @@ export function CartModal({
   const previewEndpointUrls = getApiRequestUrls('/orders/price-preview');
   const createOrderEndpointUrls = getApiRequestUrls('/orders/create');
   const loyaltyEndpointUrls = getApiRequestUrls('/profile/loyalty');
+  const settingsEndpointUrls = getApiRequestUrls('/settings/public');
 
   const getTemperatureLabel = (temperature?: DrinkTemperature) => {
     if (!temperature) return '';
@@ -261,6 +268,27 @@ export function CartModal({
   }, [sessionToken]);
 
   useEffect(() => {
+    let mounted = true;
+    const loadOpenStatus = () => {
+      fetchJsonWithFallback(settingsEndpointUrls)
+        .then(({ data: j }) => {
+          if (!mounted || !j?.success) return;
+          if (typeof j.isOpen === 'boolean') setShopOpen(j.isOpen);
+          if (j?.hours?.en || j?.hours?.ar) {
+            setShopHours({ en: String(j.hours.en || ''), ar: String(j.hours.ar || '') });
+          }
+        })
+        .catch(() => {});
+    };
+    loadOpenStatus();
+    const interval = window.setInterval(loadOpenStatus, 30000);
+    return () => {
+      mounted = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
     if (items.length === 0) return;
 
     let ignore = false;
@@ -350,6 +378,12 @@ export function CartModal({
       });
 
       if (!response.ok) {
+        if (data?.shopClosed) {
+          setShopOpen(false);
+          if (data?.hours?.en || data?.hours?.ar) {
+            setShopHours({ en: String(data.hours.en || ''), ar: String(data.hours.ar || '') });
+          }
+        }
         throw new Error(data.error || 'Failed to create order');
       }
 
@@ -419,6 +453,10 @@ export function CartModal({
     }
     if (items.length === 0) {
       setError('Cart is empty');
+      return;
+    }
+    if (!shopOpen) {
+      setError(text.shopClosedTitle);
       return;
     }
     setError('');
@@ -627,14 +665,25 @@ export function CartModal({
               </div>
             </div>
 
+            {!shopOpen && (
+              <div className="mb-4 p-3 border-2 border-[var(--matte-black)] bg-[var(--cool-gray)] text-[var(--matte-black)]">
+                <div className="mb-1">{text.shopClosedTitle}</div>
+                {shopHours && (
+                  <div className="text-sm opacity-80">
+                    {text.shopClosedMessage} {language === 'en' ? shopHours.en : shopHours.ar}
+                  </div>
+                )}
+              </div>
+            )}
+
             {error && <div className="text-red-600 mb-4">{error}</div>}
 
             <button
               onClick={handleProcessOrder}
-              disabled={loading}
+              disabled={loading || !shopOpen}
               className={`w-full py-3 ${
-                loading ? 'bg-[var(--cool-gray)]' : 'bg-[var(--espresso-brown)]'
-              } text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors`}
+                loading || !shopOpen ? 'bg-[var(--cool-gray)]' : 'bg-[var(--espresso-brown)]'
+              } text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors disabled:opacity-60`}
             >
               {loading ? text.processLoading : text.process}
             </button>

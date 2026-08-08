@@ -48,7 +48,7 @@ interface User {
   phoneNumber: string;
   name: string;
   // Align type with App.tsx: include optional role
-  role?: 'admin' | 'user';
+  role?: 'admin' | 'cashier' | 'user';
 }
 
 interface MenuPageProps {
