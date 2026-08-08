@@ -49,6 +49,9 @@ app.use('*', logger());
 
 const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || '').trim();
 const ADMIN_PHONE = process.env.ADMIN_PHONE || '0547444145';
+// The one admin account that can never be deactivated or have its privileges managed away by
+// another admin — computed early since normalizeKsaPhone() is a hoisted function declaration.
+const ADMIN_PHONE_NORMALIZED = normalizeKsaPhone(ADMIN_PHONE);
 const OTP_DEV_MODE_CONFIGURED = (process.env.OTP_DEV_MODE || '').trim() === 'true';
 const OTP_DEV_MODE = OTP_DEV_MODE_CONFIGURED && !IS_PRODUCTION;
 const OTP_DEBUG_RETURN_CODE_CONFIGURED =
@@ -289,6 +292,7 @@ async function getSessionUser(token) {
       name: String(row.name),
       role: String(row.role),
       active: row.active == null ? true : Boolean(Number(row.active)),
+      isRootAdmin: String(row.phoneNumber) === ADMIN_PHONE_NORMALIZED,
     };
     const effectiveExpiresAt = expiresAt ?? now + SESSION_TTL_MS;
     sessions.set(token, { user, expiresAt: effectiveExpiresAt });
@@ -924,13 +928,40 @@ async function requireAdmin(c) {
   const authHeader = c.req.header('Authorization') || '';
   const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
   const sessionUser = await getSessionUser(bearer);
-  if (sessionUser?.role === 'admin') return null;
+  if (sessionUser?.role === 'admin') {
+    // Re-check `active` directly against the database (not the in-memory session cache) so
+    // deactivating an admin takes effect on that admin's very next request.
+    const [rows] = await pool.execute('SELECT active FROM users WHERE id = ? LIMIT 1', [
+      sessionUser.id,
+    ]);
+    const active = Array.isArray(rows) && rows[0] ? Boolean(Number(rows[0].active)) : false;
+    if (!active) {
+      sessions.delete(bearer);
+      return c.json({ error: 'This admin account has been deactivated' }, 403);
+    }
+    return null;
+  }
 
   // Optional fallback for scripted/admin tooling (avoid shipping any admin secret to the browser)
   const headerToken = (c.req.header('x-admin-token') || '').trim();
   if (ADMIN_TOKEN_ENABLED && headerToken === ADMIN_TOKEN) return null;
 
   return c.json({ error: 'Unauthorized' }, 401);
+}
+
+// Stricter than requireAdmin: only the phone number configured as ADMIN_PHONE may manage other
+// admin accounts, so a second admin can never add accomplices or lock the owner out.
+async function requireRootAdmin(c) {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+
+  const authHeader = c.req.header('Authorization') || '';
+  const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  const sessionUser = await getSessionUser(bearer);
+  if (sessionUser?.phoneNumber !== ADMIN_PHONE_NORMALIZED) {
+    return c.json({ error: 'Only the primary admin can manage admin accounts' }, 403);
+  }
+  return null;
 }
 
 // Cashier or admin session, required for the cashier POS endpoints. Re-checks `active`
@@ -1463,7 +1494,13 @@ app.post('/api/auth/verify-otp', async (c) => {
       'INSERT INTO users (id, phoneNumber, name, email, language, role, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE role=VALUES(role), updatedAt=VALUES(updatedAt)',
       [id, normalizedPhone, effectiveName, null, null, role, Date.now(), Date.now()]
     );
-    const user = { id, phoneNumber: normalizedPhone, name: effectiveName, role };
+    const user = {
+      id,
+      phoneNumber: normalizedPhone,
+      name: effectiveName,
+      role,
+      isRootAdmin: normalizedPhone === adminPhone,
+    };
     const sessionToken = `sess_${crypto.randomBytes(24).toString('base64url')}`;
     const sessionTokenHash = hashSessionToken(sessionToken);
     const expiresAt = Date.now() + SESSION_TTL_MS;
@@ -3863,6 +3900,185 @@ app.put('/api/admin/staff/:id', async (c) => {
   } catch (e) {
     console.error('Error updating staff account', e);
     return c.json({ error: 'Failed to update staff account' }, 500);
+  }
+});
+
+// Admin: manage other admin accounts. Restricted to the primary admin (ADMIN_PHONE) via
+// requireRootAdmin — any admin can view/edit orders, menu, inventory, etc., but only the
+// primary admin can grant or revoke admin access itself.
+app.get('/api/admin/admins', async (c) => {
+  const unauthorized = await requireRootAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const [rows] = await pool.execute(
+      `SELECT id, phoneNumber, name, active, createdAt, updatedAt
+       FROM users WHERE role = 'admin' ORDER BY createdAt ASC`
+    );
+    const admins = (Array.isArray(rows) ? rows : []).map((row) => ({
+      id: row.id,
+      phoneNumber: row.phoneNumber,
+      name: row.name,
+      active: Boolean(Number(row.active)),
+      isRootAdmin: String(row.phoneNumber) === ADMIN_PHONE_NORMALIZED,
+      createdAt: Number(row.createdAt),
+      updatedAt: Number(row.updatedAt),
+    }));
+    return c.json({ success: true, admins });
+  } catch (e) {
+    console.error('Error loading admin accounts', e);
+    return c.json({ error: 'Failed to load admin accounts' }, 500);
+  }
+});
+
+app.post('/api/admin/admins', async (c) => {
+  const unauthorized = await requireRootAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const adminUser = await getAdminSessionUserFromRequest(c);
+    const { name, phoneNumber, convertExisting } = await c.req.json();
+    const trimmedName = String(name || '').trim();
+    if (!trimmedName) return c.json({ error: 'Name is required' }, 400);
+
+    const normalizedPhone = normalizeKsaPhone(phoneNumber);
+    if (!normalizedPhone) return c.json({ error: 'Invalid phone number' }, 400);
+
+    const id = `user:${normalizedPhone}`;
+    const [existingRows] = await pool.execute(
+      'SELECT role, name FROM users WHERE id = ? LIMIT 1',
+      [id]
+    );
+    const existing = Array.isArray(existingRows) && existingRows[0] ? existingRows[0] : null;
+    const now = Date.now();
+
+    if (existing) {
+      if (existing.role === 'admin') {
+        return c.json({ error: 'This phone number is already an admin account' }, 409);
+      }
+      // existing.role is 'user' or 'cashier' — refuse unless explicitly confirmed, since it may
+      // carry real order/loyalty history (or, for a cashier, an active staff account).
+      if (!convertExisting) {
+        return c.json(
+          {
+            error: `An existing ${existing.role} account already uses this phone number`,
+            existingRole: existing.role,
+            existingName: existing.name || null,
+          },
+          409
+        );
+      }
+
+      await pool.execute(
+        `UPDATE users SET role = 'admin', name = ?, active = 1, updatedAt = ? WHERE id = ?`,
+        [trimmedName, now, id]
+      );
+      return c.json({
+        success: true,
+        admin: {
+          id,
+          phoneNumber: normalizedPhone,
+          name: trimmedName,
+          active: true,
+          isRootAdmin: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+        converted: true,
+      });
+    }
+
+    await pool.execute(
+      `INSERT INTO users
+       (id, phoneNumber, name, email, language, role, active, createdBy, createdAt, updatedAt)
+       VALUES (?, ?, ?, NULL, NULL, 'admin', 1, ?, ?, ?)`,
+      [id, normalizedPhone, trimmedName, adminUser?.id || null, now, now]
+    );
+
+    return c.json({
+      success: true,
+      admin: {
+        id,
+        phoneNumber: normalizedPhone,
+        name: trimmedName,
+        active: true,
+        isRootAdmin: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+  } catch (e) {
+    console.error('Error creating admin account', e);
+    return c.json({ error: 'Failed to create admin account' }, 500);
+  }
+});
+
+app.put('/api/admin/admins/:id', async (c) => {
+  const unauthorized = await requireRootAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const id = c.req.param('id');
+    if (id === `user:${ADMIN_PHONE_NORMALIZED}`) {
+      return c.json({ error: 'The primary admin account cannot be edited here' }, 403);
+    }
+
+    const [rows] = await pool.execute("SELECT * FROM users WHERE id = ? AND role = 'admin' LIMIT 1", [
+      id,
+    ]);
+    const existing = Array.isArray(rows) && rows[0] ? rows[0] : null;
+    if (!existing) return c.json({ error: 'Admin account not found' }, 404);
+
+    const { name, active } = await c.req.json();
+    const updates = [];
+    const params = [];
+
+    if (name !== undefined) {
+      const trimmedName = String(name || '').trim();
+      if (!trimmedName) return c.json({ error: 'Name cannot be empty' }, 400);
+      updates.push('name = ?');
+      params.push(trimmedName);
+    }
+    if (active !== undefined) {
+      updates.push('active = ?');
+      params.push(active ? 1 : 0);
+    }
+
+    if (updates.length === 0) {
+      return c.json({ error: 'No changes provided' }, 400);
+    }
+
+    const now = Date.now();
+    updates.push('updatedAt = ?');
+    params.push(now);
+    params.push(id);
+    await pool.execute(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+
+    // Deactivating an admin should also end any session they're currently using.
+    if (active === false) {
+      await pool.execute('DELETE FROM sessions WHERE userId = ?', [id]);
+      for (const [token, entry] of sessions.entries()) {
+        if (entry?.user?.id === id) sessions.delete(token);
+      }
+    }
+
+    const [updatedRows] = await pool.execute(
+      'SELECT id, phoneNumber, name, active, createdAt, updatedAt FROM users WHERE id = ? LIMIT 1',
+      [id]
+    );
+    const updated = updatedRows[0];
+    return c.json({
+      success: true,
+      admin: {
+        id: updated.id,
+        phoneNumber: updated.phoneNumber,
+        name: updated.name,
+        active: Boolean(Number(updated.active)),
+        isRootAdmin: false,
+        createdAt: Number(updated.createdAt),
+        updatedAt: Number(updated.updatedAt),
+      },
+    });
+  } catch (e) {
+    console.error('Error updating admin account', e);
+    return c.json({ error: 'Failed to update admin account' }, 500);
   }
 });
 

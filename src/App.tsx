@@ -43,6 +43,8 @@ interface User {
   name: string;
   // Add optional role for admin/cashier gating
   role?: 'admin' | 'cashier' | 'user';
+  // True only for the phone number configured as ADMIN_PHONE — gates the Admins tab
+  isRootAdmin?: boolean;
 }
 
 export default function App() {
@@ -199,18 +201,21 @@ export default function App() {
       if (isCashierTarget) setCurrentPage('cashier');
       setPendingHash(null);
     }
-    // Auto-route to dashboard when signing in from Admin Login page
-    if (userData?.role === 'admin' && currentPage === 'admin-login') {
-      setCurrentPage('dashboard');
-      window.location.hash = '/dashboard';
-    }
-    // Auto-route to the POS screen when signing in from Cashier Login page
-    if (
-      (userData?.role === 'cashier' || userData?.role === 'admin') &&
-      currentPage === 'cashier-login'
-    ) {
-      setCurrentPage('cashier');
-      window.location.hash = '/cashier';
+    // Auto-route staff to their landing area when signing in directly from a staff login
+    // screen with no specific destination already queued above. admin-login and
+    // cashier-login render the same shared form, so branch on the signed-in role rather
+    // than on which of the two hashes happened to be open — otherwise a cashier who lands
+    // on /#/admin-login (or an admin who lands on /#/cashier-login) gets stuck on the
+    // login screen after a successful sign-in.
+    if (!pendingHash) {
+      const onStaffLoginPage = currentPage === 'admin-login' || currentPage === 'cashier-login';
+      if (onStaffLoginPage && userData?.role === 'admin') {
+        setCurrentPage('dashboard');
+        window.location.hash = '/dashboard';
+      } else if (onStaffLoginPage && userData?.role === 'cashier') {
+        setCurrentPage('cashier');
+        window.location.hash = '/cashier';
+      }
     }
 
     // Don't auto-navigate to admin - let admin edit menu directly
@@ -469,7 +474,12 @@ export default function App() {
         {currentPage === 'contact' && <ContactPage onBack={handleBack} language={language} />}
 
         {currentPage === 'dashboard' && sessionToken && (
-          <AdminDashboard onBack={handleBack} sessionToken={sessionToken} language={language} />
+          <AdminDashboard
+            onBack={handleBack}
+            sessionToken={sessionToken}
+            language={language}
+            isRootAdmin={Boolean(user?.isRootAdmin)}
+          />
         )}
 
         {currentPage === 'admin-login' && (

@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Users, ClipboardList, Utensils, RefreshCw, Package, UserCog } from 'lucide-react';
+import {
+  ArrowLeft,
+  Users,
+  ClipboardList,
+  Utensils,
+  RefreshCw,
+  Package,
+  UserCog,
+  ShieldCheck,
+} from 'lucide-react';
 import { AdminPanel } from './AdminPanel';
 import { AdminInventoryPanel } from './AdminInventoryPanel';
 import { allowSeedMenuTools, apiBaseUrl } from '../utils/api';
@@ -8,15 +17,34 @@ interface AdminDashboardProps {
   onBack: () => void;
   sessionToken: string;
   language: 'en' | 'ar';
+  isRootAdmin?: boolean;
 }
 
-type Tab = 'live-orders' | 'history' | 'menu' | 'inventory' | 'customers' | 'staff' | 'settings';
+type Tab =
+  | 'live-orders'
+  | 'history'
+  | 'menu'
+  | 'inventory'
+  | 'customers'
+  | 'staff'
+  | 'admins'
+  | 'settings';
 
 interface StaffAccount {
   id: string;
   phoneNumber: string;
   name: string;
   active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface AdminAccount {
+  id: string;
+  phoneNumber: string;
+  name: string;
+  active: boolean;
+  isRootAdmin: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -39,7 +67,12 @@ interface OrderStats {
   today: { dateKey: string; orders: number; completed: number; revenue: number };
 }
 
-export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboardProps) {
+export function AdminDashboard({
+  onBack,
+  sessionToken,
+  language,
+  isRootAdmin,
+}: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<Tab>('live-orders');
 
   // Read tab from hash (#/dashboard/<tab>)
@@ -58,6 +91,7 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
           tab === 'inventory' ||
           tab === 'customers' ||
           tab === 'staff' ||
+          tab === 'admins' ||
           tab === 'settings'
         ) {
           setActiveTab(tab);
@@ -91,6 +125,18 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
   const [editingStaffId, setEditingStaffId] = useState<string | null>(null);
   const [editStaffName, setEditStaffName] = useState('');
   const [savingStaffId, setSavingStaffId] = useState<string | null>(null);
+  const [admins, setAdmins] = useState<AdminAccount[]>([]);
+  const [adminsLoading, setAdminsLoading] = useState(false);
+  const [adminsError, setAdminsError] = useState('');
+  const [newAdminName, setNewAdminName] = useState('');
+  const [newAdminPhone, setNewAdminPhone] = useState('');
+  const [creatingAdmin, setCreatingAdmin] = useState(false);
+  const [pendingAdminConvert, setPendingAdminConvert] = useState<{
+    existingName: string | null;
+  } | null>(null);
+  const [editingAdminId, setEditingAdminId] = useState<string | null>(null);
+  const [editAdminName, setEditAdminName] = useState('');
+  const [savingAdminId, setSavingAdminId] = useState<string | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [isOpenSetting, setIsOpenSetting] = useState(true);
   const [computedOpenSetting, setComputedOpenSetting] = useState(true);
@@ -127,6 +173,16 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       cancel: 'Cancel',
       noStaff: 'No cashier accounts yet',
       staffCreated: 'Cashier account created',
+      adminsTab: 'Admins',
+      adminName: 'Name',
+      adminPhone: 'Phone Number',
+      adminHint: 'The admin signs in with this phone number using a normal SMS code.',
+      addAdmin: 'Add Admin',
+      noAdmins: 'No other admin accounts yet',
+      rootAdminBadge: 'Primary',
+      convertAdminPrompt: 'An existing account already uses this phone number. Convert it to an admin account instead?',
+      convertAdminConfirm: 'Convert to Admin',
+      rootAdminOnly: 'Only the primary admin can manage admin accounts.',
       refresh: 'Refresh',
       cleanupSeed: 'Remove Seed Items',
       openStatus: 'Open Status',
@@ -187,6 +243,16 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
       cancel: 'إلغاء',
       noStaff: 'لا يوجد حسابات كاشير بعد',
       staffCreated: 'تم إنشاء حساب الكاشير',
+      adminsTab: 'المدراء',
+      adminName: 'الاسم',
+      adminPhone: 'رقم الهاتف',
+      adminHint: 'يسجل المدير الدخول بهذا الرقم عبر رمز SMS عادي.',
+      addAdmin: 'إضافة مدير',
+      noAdmins: 'لا يوجد مدراء آخرون بعد',
+      rootAdminBadge: 'الأساسي',
+      convertAdminPrompt: 'يوجد حساب بهذا الرقم بالفعل. هل تريد تحويله إلى حساب مدير؟',
+      convertAdminConfirm: 'تحويل إلى مدير',
+      rootAdminOnly: 'يمكن فقط للمدير الأساسي إدارة حسابات المدراء.',
       refresh: 'تحديث',
       cleanupSeed: 'حذف العناصر الأولية',
       openStatus: 'حالة المتجر',
@@ -366,6 +432,126 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
     }
   };
 
+  const loadAdmins = async () => {
+    setAdminsLoading(true);
+    setAdminsError('');
+    try {
+      const res = await fetch(`${apiBaseUrl}/admin/admins`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAdmins(data.admins || []);
+      } else {
+        setAdminsError(data.error || 'Failed to load admin accounts');
+      }
+    } catch (e) {
+      console.error('Error loading admin accounts', e);
+      setAdminsError('Failed to load admin accounts');
+    } finally {
+      setAdminsLoading(false);
+    }
+  };
+
+  const createAdmin = async (convertExisting = false) => {
+    setAdminsError('');
+    if (!newAdminName.trim() || !newAdminPhone.trim()) return;
+    setCreatingAdmin(true);
+    try {
+      const res = await fetch(`${apiBaseUrl}/admin/admins`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({
+          name: newAdminName.trim(),
+          phoneNumber: newAdminPhone.trim(),
+          ...(convertExisting ? { convertExisting: true } : {}),
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        if (data.existingRole) {
+          setPendingAdminConvert({ existingName: data.existingName || null });
+        } else {
+          setPendingAdminConvert(null);
+        }
+        setAdminsError(data.error || 'Failed to create admin account');
+        return;
+      }
+      setPendingAdminConvert(null);
+      setNewAdminName('');
+      setNewAdminPhone('');
+      await loadAdmins();
+    } catch (e) {
+      console.error('Error creating admin account', e);
+      setAdminsError('Failed to create admin account');
+    } finally {
+      setCreatingAdmin(false);
+    }
+  };
+
+  const startEditAdmin = (member: AdminAccount) => {
+    setEditingAdminId(member.id);
+    setEditAdminName(member.name);
+    setAdminsError('');
+  };
+
+  const saveAdminEdits = async (id: string) => {
+    setSavingAdminId(id);
+    setAdminsError('');
+    try {
+      const payload: Record<string, unknown> = { name: editAdminName.trim() };
+      const res = await fetch(`${apiBaseUrl}/admin/admins/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setAdminsError(data.error || 'Failed to update admin account');
+        return;
+      }
+      setEditingAdminId(null);
+      await loadAdmins();
+    } catch (e) {
+      console.error('Error updating admin account', e);
+      setAdminsError('Failed to update admin account');
+    } finally {
+      setSavingAdminId(null);
+    }
+  };
+
+  const toggleAdminActive = async (member: AdminAccount) => {
+    setSavingAdminId(member.id);
+    setAdminsError('');
+    try {
+      const res = await fetch(`${apiBaseUrl}/admin/admins/${member.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ active: !member.active }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setAdminsError(data.error || 'Failed to update admin account');
+        return;
+      }
+      await loadAdmins();
+    } catch (e) {
+      console.error('Error updating admin account', e);
+      setAdminsError('Failed to update admin account');
+    } finally {
+      setSavingAdminId(null);
+    }
+  };
+
   const loadSettings = async () => {
     setSettingsLoading(true);
     try {
@@ -418,6 +604,12 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
   }, [activeTab]);
 
   useEffect(() => {
+    if (activeTab === 'admins' && isRootAdmin) {
+      loadAdmins();
+    }
+  }, [activeTab, isRootAdmin]);
+
+  useEffect(() => {
     if (activeTab === 'settings') {
       loadSettings();
     }
@@ -463,6 +655,16 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
               aria-label={text.refresh}
             >
               <RefreshCw size={24} className={staffLoading ? 'animate-spin' : ''} />
+            </button>
+          )}
+          {activeTab === 'admins' && isRootAdmin && (
+            <button
+              onClick={loadAdmins}
+              disabled={adminsLoading}
+              className="text-[var(--matte-black)] hover:text-[var(--espresso-brown)] transition-colors disabled:opacity-50"
+              aria-label={text.refresh}
+            >
+              <RefreshCw size={24} className={adminsLoading ? 'animate-spin' : ''} />
             </button>
           )}
           {activeTab === 'customers' && (
@@ -611,6 +813,14 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
           >
             <UserCog size={16} /> {text.staffTab}
           </button>
+          {isRootAdmin && (
+            <button
+              className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 whitespace-nowrap shrink-0 ${activeTab === 'admins' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
+              onClick={() => setTab('admins')}
+            >
+              <ShieldCheck size={16} /> {text.adminsTab}
+            </button>
+          )}
           <button
             className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 whitespace-nowrap shrink-0 ${activeTab === 'settings' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
             onClick={() => setTab('settings')}
@@ -894,6 +1104,161 @@ export function AdminDashboard({ onBack, sessionToken, language }: AdminDashboar
                                 </button>
                                 <button
                                   onClick={() => toggleStaffActive(member)}
+                                  disabled={isSaving}
+                                  className="px-3 py-1 border-2 border-[var(--matte-black)] text-sm hover:bg-[var(--cool-gray)] disabled:opacity-50"
+                                >
+                                  {isSaving ? '...' : member.active ? text.deactivate : text.activate}
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+        {activeTab === 'admins' && !isRootAdmin && (
+          <div className="text-[var(--matte-black)]">{text.rootAdminOnly}</div>
+        )}
+        {activeTab === 'admins' && isRootAdmin && (
+          <div>
+            <div className="border-2 border-[var(--matte-black)] p-4 bg-[var(--crisp-white)] mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm text-[var(--matte-black)] opacity-70">
+                    {text.adminName}
+                  </label>
+                  <input
+                    value={newAdminName}
+                    onChange={(e) => {
+                      setNewAdminName(e.target.value);
+                      setPendingAdminConvert(null);
+                    }}
+                    className="w-full mt-1 px-3 py-2 border-2 border-[var(--matte-black)] text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-[var(--matte-black)] opacity-70">
+                    {text.adminPhone}
+                  </label>
+                  <input
+                    value={newAdminPhone}
+                    onChange={(e) => {
+                      setNewAdminPhone(e.target.value);
+                      setPendingAdminConvert(null);
+                    }}
+                    placeholder="05XXXXXXXX"
+                    dir="ltr"
+                    className="w-full mt-1 px-3 py-2 border-2 border-[var(--matte-black)] text-sm"
+                  />
+                </div>
+              </div>
+              <div className="text-xs text-[var(--matte-black)] opacity-60 mt-2">{text.adminHint}</div>
+              {adminsError && <div className="text-red-600 text-sm mt-3">{adminsError}</div>}
+              {pendingAdminConvert && (
+                <div className="mt-3 p-3 border-2 border-[var(--matte-black)] bg-[var(--cool-gray)] text-sm">
+                  <div className="mb-2">
+                    {text.convertAdminPrompt}
+                    {pendingAdminConvert.existingName ? ` (${pendingAdminConvert.existingName})` : ''}
+                  </div>
+                  <button
+                    onClick={() => createAdmin(true)}
+                    disabled={creatingAdmin}
+                    className="px-3 py-1.5 bg-[var(--espresso-brown)] text-[var(--crisp-white)] text-sm disabled:opacity-50"
+                  >
+                    {creatingAdmin ? '...' : text.convertAdminConfirm}
+                  </button>
+                </div>
+              )}
+              <button
+                onClick={() => createAdmin()}
+                disabled={creatingAdmin || !newAdminName.trim() || !newAdminPhone.trim()}
+                className="mt-3 px-4 py-2 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors text-sm disabled:opacity-50"
+              >
+                {creatingAdmin ? '...' : text.addAdmin}
+              </button>
+            </div>
+
+            {admins.length === 0 ? (
+              <div className="text-[var(--matte-black)]">{adminsLoading ? '...' : text.noAdmins}</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full border-2 border-[var(--matte-black)]">
+                  <thead>
+                    <tr className="bg-[var(--matte-black)] text-[var(--crisp-white)]">
+                      <th className="p-2 border-b-2 border-[var(--matte-black)] text-left">
+                        {text.adminName}
+                      </th>
+                      <th className="p-2 border-b-2 border-[var(--matte-black)] text-left">
+                        {text.adminPhone}
+                      </th>
+                      <th className="p-2 border-b-2 border-[var(--matte-black)] text-left">
+                        {text.status}
+                      </th>
+                      <th className="p-2 border-b-2 border-[var(--matte-black)] text-left" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {admins.map((member) => {
+                      const isEditing = editingAdminId === member.id;
+                      const isSaving = savingAdminId === member.id;
+                      return (
+                        <tr
+                          key={member.id}
+                          className="odd:bg-[var(--crisp-white)] even:bg-[#f7f7f7] align-top"
+                        >
+                          <td className="p-2 border-b border-[var(--matte-black)]">
+                            {isEditing ? (
+                              <input
+                                value={editAdminName}
+                                onChange={(e) => setEditAdminName(e.target.value)}
+                                className="w-full px-2 py-1 border-2 border-[var(--matte-black)] text-sm"
+                              />
+                            ) : (
+                              member.name
+                            )}
+                          </td>
+                          <td className="p-2 border-b border-[var(--matte-black)]" dir="ltr">
+                            {member.phoneNumber}
+                          </td>
+                          <td className="p-2 border-b border-[var(--matte-black)]">
+                            {member.active ? text.activeStatus : text.inactiveStatus}
+                          </td>
+                          <td className="p-2 border-b border-[var(--matte-black)]">
+                            {member.isRootAdmin ? (
+                              <span className="text-xs uppercase tracking-wider text-[var(--matte-black)] opacity-60">
+                                {text.rootAdminBadge}
+                              </span>
+                            ) : isEditing ? (
+                              <div className="flex gap-2 min-w-[180px]">
+                                <button
+                                  onClick={() => saveAdminEdits(member.id)}
+                                  disabled={isSaving || !editAdminName.trim()}
+                                  className="px-3 py-1 bg-[var(--espresso-brown)] text-[var(--crisp-white)] text-sm disabled:opacity-50"
+                                >
+                                  {isSaving ? '...' : text.saveChanges}
+                                </button>
+                                <button
+                                  onClick={() => setEditingAdminId(null)}
+                                  className="px-3 py-1 border-2 border-[var(--matte-black)] text-sm"
+                                >
+                                  {text.cancel}
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => startEditAdmin(member)}
+                                  className="px-3 py-1 border-2 border-[var(--matte-black)] text-sm hover:bg-[var(--cool-gray)]"
+                                >
+                                  {text.edit}
+                                </button>
+                                <button
+                                  onClick={() => toggleAdminActive(member)}
                                   disabled={isSaving}
                                   className="px-3 py-1 border-2 border-[var(--matte-black)] text-sm hover:bg-[var(--cool-gray)] disabled:opacity-50"
                                 >
