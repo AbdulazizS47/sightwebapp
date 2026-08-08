@@ -21,12 +21,16 @@ interface Category {
   order: number;
 }
 
+type DrinkTemperature = 'hot' | 'iced';
+
 interface CartLine {
   id: string;
+  cartKey: string;
   nameEn: string;
   nameAr: string;
   price: number;
   quantity: number;
+  temperature?: DrinkTemperature;
 }
 
 interface PricingSummary {
@@ -53,6 +57,9 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [activeCategory, setActiveCategory] = useState('');
   const [cart, setCart] = useState<CartLine[]>([]);
+  const [selectedTemperatures, setSelectedTemperatures] = useState<
+    Record<string, DrinkTemperature>
+  >({});
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card'>('cash');
   const [customerPhone, setCustomerPhone] = useState('');
   const [pricing, setPricing] = useState<PricingSummary | null>(null);
@@ -90,6 +97,9 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
       confirmedTitle: 'Order placed',
       orderNo: 'Order #',
       loadingMenu: 'Loading menu...',
+      temperature: 'Temperature',
+      hot: 'Hot',
+      iced: 'Iced',
     },
     ar: {
       title: 'طلب جديد',
@@ -113,6 +123,9 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
       confirmedTitle: 'تم إنشاء الطلب',
       orderNo: 'رقم الطلب',
       loadingMenu: 'جارٍ تحميل القائمة...',
+      temperature: 'درجة المشروب',
+      hot: 'ساخن',
+      iced: 'بارد',
     },
   } as const;
 
@@ -192,7 +205,11 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              items: cart.map((line) => ({ id: line.id, quantity: line.quantity })),
+              items: cart.map((line) => ({
+                id: line.id,
+                quantity: line.quantity,
+                options: line.temperature ? { temperature: line.temperature } : undefined,
+              })),
               language,
             }),
           });
@@ -220,25 +237,48 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
     };
   }, [cart, itemsTotal, language]);
 
+  const hasTemperatureChoice = (item: MenuItem) => item.category.toLowerCase() === 'v60';
+
+  const getSelectedTemperature = (item: MenuItem): DrinkTemperature =>
+    selectedTemperatures[item.id] || 'iced';
+
+  const getCartKey = (itemId: string, temperature?: DrinkTemperature) =>
+    temperature ? `${itemId}:${temperature}` : itemId;
+
+  const getTemperatureLabel = (temperature?: DrinkTemperature) => {
+    if (!temperature) return '';
+    return temperature === 'hot' ? text.hot : text.iced;
+  };
+
   const addToCart = (item: MenuItem) => {
+    const temperature = hasTemperatureChoice(item) ? getSelectedTemperature(item) : undefined;
+    const cartKey = getCartKey(item.id, temperature);
     setCart((prev) => {
-      const existing = prev.find((line) => line.id === item.id);
+      const existing = prev.find((line) => line.cartKey === cartKey);
       if (existing) {
         return prev.map((line) =>
-          line.id === item.id ? { ...line, quantity: line.quantity + 1 } : line
+          line.cartKey === cartKey ? { ...line, quantity: line.quantity + 1 } : line
         );
       }
       return [
         ...prev,
-        { id: item.id, nameEn: item.nameEn, nameAr: item.nameAr, price: item.price, quantity: 1 },
+        {
+          id: item.id,
+          cartKey,
+          nameEn: item.nameEn,
+          nameAr: item.nameAr,
+          price: item.price,
+          quantity: 1,
+          temperature,
+        },
       ];
     });
   };
 
-  const changeQuantity = (id: string, delta: number) => {
+  const changeQuantity = (cartKey: string, delta: number) => {
     setCart((prev) =>
       prev
-        .map((line) => (line.id === id ? { ...line, quantity: line.quantity + delta } : line))
+        .map((line) => (line.cartKey === cartKey ? { ...line, quantity: line.quantity + delta } : line))
         .filter((line) => line.quantity > 0)
     );
   };
@@ -274,7 +314,11 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
               Authorization: `Bearer ${sessionToken}`,
             },
             body: JSON.stringify({
-              items: cart.map((line) => ({ id: line.id, quantity: line.quantity })),
+              items: cart.map((line) => ({
+                id: line.id,
+                quantity: line.quantity,
+                options: line.temperature ? { temperature: line.temperature } : undefined,
+              })),
               paymentMethod,
               customerPhoneNumber: customerPhone.trim() || undefined,
               language,
@@ -367,12 +411,22 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {visibleItems.map((item) => {
-                    const cartLine = cart.find((line) => line.id === item.id);
+                    const itemHasTemperatureChoice = hasTemperatureChoice(item);
+                    const selectedTemperature = itemHasTemperatureChoice
+                      ? getSelectedTemperature(item)
+                      : undefined;
+                    const cartKey = getCartKey(item.id, selectedTemperature);
+                    const cartLine = cart.find((line) => line.cartKey === cartKey);
                     return (
-                      <button
+                      <div
                         key={item.id}
+                        role="button"
+                        tabIndex={0}
                         onClick={() => addToCart(item)}
-                        className="relative text-left border-2 border-[var(--matte-black)] bg-[var(--crisp-white)] hover:bg-[var(--cool-gray)] transition-colors overflow-hidden"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') addToCart(item);
+                        }}
+                        className="relative text-left border-2 border-[var(--matte-black)] bg-[var(--crisp-white)] hover:bg-[var(--cool-gray)] transition-colors overflow-hidden cursor-pointer"
                       >
                         <div className="w-full aspect-square bg-[var(--cool-gray)]">
                           <ImageWithFallback
@@ -385,6 +439,38 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
                           <div className="text-sm text-[var(--matte-black)] truncate">
                             {language === 'en' ? item.nameEn : item.nameAr}
                           </div>
+                          {itemHasTemperatureChoice && (
+                            <div
+                              className="flex w-fit max-w-full border border-[var(--matte-black)] bg-[var(--crisp-white)] my-1"
+                              role="group"
+                              aria-label={text.temperature}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {(['hot', 'iced'] as DrinkTemperature[]).map((temperature) => {
+                                const selected = selectedTemperature === temperature;
+                                return (
+                                  <button
+                                    key={temperature}
+                                    type="button"
+                                    onClick={() =>
+                                      setSelectedTemperatures((prev) => ({
+                                        ...prev,
+                                        [item.id]: temperature,
+                                      }))
+                                    }
+                                    className={`min-w-[48px] px-2 py-1 text-[11px] transition-colors ${
+                                      selected
+                                        ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]'
+                                        : 'text-[var(--matte-black)] hover:bg-[var(--cool-gray)]'
+                                    }`}
+                                    aria-pressed={selected}
+                                  >
+                                    {temperature === 'hot' ? text.hot : text.iced}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                           <div className="text-xs text-[var(--matte-black)] opacity-70">
                             {item.price} {text.sar}
                           </div>
@@ -394,7 +480,7 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
                             {cartLine.quantity}
                           </div>
                         )}
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -417,26 +503,27 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
               <div className="space-y-2 mb-4">
                 {cart.map((line) => (
                   <div
-                    key={line.id}
+                    key={line.cartKey}
                     className="flex items-center gap-2 p-2 bg-[var(--cool-gray)] text-[var(--matte-black)]"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="text-sm truncate">
                         {language === 'en' ? line.nameEn : line.nameAr}
+                        {line.temperature && ` · ${getTemperatureLabel(line.temperature)}`}
                       </div>
                       <div className="text-xs opacity-70">
                         {line.price} {text.sar}
                       </div>
                     </div>
                     <button
-                      onClick={() => changeQuantity(line.id, -1)}
+                      onClick={() => changeQuantity(line.cartKey, -1)}
                       className="w-8 h-8 bg-[var(--espresso-brown)] text-[var(--crisp-white)] flex items-center justify-center"
                     >
                       <Minus size={14} />
                     </button>
                     <span className="w-6 text-center">{line.quantity}</span>
                     <button
-                      onClick={() => changeQuantity(line.id, 1)}
+                      onClick={() => changeQuantity(line.cartKey, 1)}
                       className="w-8 h-8 bg-[var(--espresso-brown)] text-[var(--crisp-white)] flex items-center justify-center"
                     >
                       <Plus size={14} />
