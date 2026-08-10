@@ -8,7 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pool, initSchema, ensureDatabase } from './db.js';
 import { sendOtpSms } from './sms.js';
-import { selectFreeCoffeeReward } from './loyalty.js';
+import { getLoyaltyCycleStamps, selectFreeCoffeeReward } from './loyalty.js';
 import {
   getOrderNotificationStatus,
   sendInventoryLowStockNotification,
@@ -564,7 +564,7 @@ async function buildOrderPricing({
       [effectiveUserId]
     );
     const points = Number(rows?.[0]?.points || 0);
-    const stamps = points > 0 ? ((points - 1) % LOYALTY_REWARD_CYCLE) + 1 : 0;
+    const stamps = getLoyaltyCycleStamps(points, LOYALTY_REWARD_CYCLE);
     rewardType = stamps === LOYALTY_REWARD_CYCLE ? 'free' : null;
 
     if (rewardType === 'free') {
@@ -923,6 +923,47 @@ async function migrateLegacyItemImages() {
   }
 }
 
+// One-time fix for a loyalty cycle off-by-one bug: the reward used to land on order 6, 11,
+// 16... instead of 5, 10, 15... (see getLoyaltyCycleStamps in loyalty.js). Shifting every
+// existing balance back by one order preserves each customer's current "orders until next
+// free cup" exactly as it was under the old math, so nobody who was about to earn a reward
+// loses it and nobody gets an undeserved extra one. Guarded by an app_settings flag so this
+// can only ever run once, no matter how many times the server restarts.
+async function migrateLoyaltyCycleOffset() {
+  const MIGRATION_KEY = 'loyaltyPointsCycleFixApplied';
+  try {
+    const already = await getSetting(MIGRATION_KEY, null);
+    if (already === 'true') return;
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [result] = await conn.execute(
+        'UPDATE loyalty_accounts SET points = GREATEST(points - 1, 0) WHERE points > 0'
+      );
+      await conn.execute(
+        'INSERT INTO app_settings (`key`, `value`, updatedAt) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE `value`=VALUES(`value`), updatedAt=VALUES(updatedAt)',
+        [MIGRATION_KEY, 'true', Date.now()]
+      );
+      await conn.commit();
+      console.log(
+        `Loyalty cycle fix: realigned ${result?.affectedRows || 0} customer point balance(s)`
+      );
+    } catch (txError) {
+      try {
+        await conn.rollback();
+      } catch {
+        // ignore rollback failure
+      }
+      throw txError;
+    } finally {
+      conn.release();
+    }
+  } catch (error) {
+    console.error('Failed to run loyalty cycle offset migration', error);
+  }
+}
+
 // Helpers
 async function requireAdmin(c) {
   const authHeader = c.req.header('Authorization') || '';
@@ -1273,6 +1314,7 @@ await initSchema();
 await ensureUploadsDir();
 await backfillLocalUploads();
 await migrateLegacyItemImages();
+await migrateLoyaltyCycleOffset();
 
 // Serve uploaded images
 app.get('/uploads/:filename', async (c) => {

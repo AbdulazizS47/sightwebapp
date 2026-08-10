@@ -225,7 +225,9 @@ export function ProfilePage({
   };
 
   const points = Number(loyalty?.points || 0);
-  const stamps = loyalty?.enabled && points > 0 ? ((points - 1) % loyaltyRewardCycle) + 1 : 0;
+  // Slot the *upcoming* order would fill (1..5): 4 completed orders means this next order is
+  // slot 5, the free one. Matches the server's eligibility check.
+  const stamps = loyalty?.enabled && points > 0 ? (points % loyaltyRewardCycle) + 1 : 0;
   const rewardAvailable = stamps === loyaltyRewardCycle;
   const progressPct = Math.max(0, Math.min(100, (stamps / loyaltyRewardCycle) * 100));
 

@@ -1,5 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { selectFreeCoffeeReward } from './loyalty.js';
+import { getLoyaltyCycleStamps, selectFreeCoffeeReward } from './loyalty.js';
+
+describe('getLoyaltyCycleStamps', () => {
+  it('has no reward before any orders are completed', () => {
+    expect(getLoyaltyCycleStamps(0)).toBe(0);
+  });
+
+  it('makes the 5th order free after 4 completed orders, not the 6th', () => {
+    // Regression test: a (points - 1) % cycle formula makes the reward land on order 6
+    // instead of order 5. Reported by a real customer (order #10 wrongly refused).
+    expect(getLoyaltyCycleStamps(4)).toBe(5);
+    expect(getLoyaltyCycleStamps(3)).toBe(4);
+    expect(getLoyaltyCycleStamps(5)).toBe(1); // fresh cycle right after the reward order
+  });
+
+  it('makes every 5th order free thereafter (10th, 15th, ...)', () => {
+    expect(getLoyaltyCycleStamps(9)).toBe(5);
+    expect(getLoyaltyCycleStamps(14)).toBe(5);
+    expect(getLoyaltyCycleStamps(19)).toBe(5);
+    expect(getLoyaltyCycleStamps(8)).toBe(4);
+    expect(getLoyaltyCycleStamps(10)).toBe(1);
+  });
+
+  it('supports a non-default cycle length', () => {
+    expect(getLoyaltyCycleStamps(2, 3)).toBe(3);
+    expect(getLoyaltyCycleStamps(1, 3)).toBe(2);
+  });
+});
 
 describe('selectFreeCoffeeReward', () => {
   it('does not use a higher-priced sweet as the fifth-order reward', () => {

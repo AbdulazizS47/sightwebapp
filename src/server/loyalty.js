@@ -43,6 +43,22 @@ export function isCoffeeRewardEligible(item) {
 }
 
 /**
+ * Position (1..cycleLength) that the order *about to be placed* would occupy in the loyalty
+ * card, given `points` orders already completed. Reaching `cycleLength` means this upcoming
+ * order is the free one — so with the default 5-order cycle, the reward lands on order 5, 10,
+ * 15... not one order later on 6, 11, 16, which is what a `(points - 1) % cycleLength` formula
+ * would produce. Returns 0 when there are no completed orders yet.
+ */
+export function getLoyaltyCycleStamps(points, cycleLength = 5) {
+  const safePoints = Number.isFinite(Number(points)) ? Math.max(0, Number(points)) : 0;
+  const safeCycleLength = Number.isFinite(Number(cycleLength)) && Number(cycleLength) > 0
+    ? Math.floor(Number(cycleLength))
+    : 5;
+  if (safePoints <= 0) return 0;
+  return (safePoints % safeCycleLength) + 1;
+}
+
+/**
  * Selects one eligible coffee unit. Quantity is deliberately ignored: even if
  * the customer orders several cups, only one unit is free.
  */

@@ -260,7 +260,9 @@ export function CartModal({
       .then(({ data: j }) => {
         if (j.success && j.loyalty) {
           const points = Number(j.loyalty.points || 0);
-          const stamps = points > 0 ? ((points - 1) % loyaltyRewardCycle) + 1 : 0;
+          // Slot the *upcoming* order would fill (1..5): 4 completed orders means this next
+          // order is slot 5, the free one. Matches the server's eligibility check.
+          const stamps = points > 0 ? (points % loyaltyRewardCycle) + 1 : 0;
           setLoyalty({ enabled: Boolean(Number(j.loyalty.enabled)), stamps });
         }
       })
