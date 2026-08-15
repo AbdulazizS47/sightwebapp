@@ -115,6 +115,67 @@ async function sendViaWhatsAppCloud({ phoneNumber, code, language }) {
   return true;
 }
 
+// Broadcast/marketing messages — same WhatsApp Business Account and Cloud API credentials as
+// the OTP sender above, but a separate "Marketing" category template (Meta reviews and prices
+// Marketing templates differently from Authentication ones; see docs/whatsapp-otp-setup.md).
+// The approved template is expected to have exactly one body variable ({{1}}) that the whole
+// composed message text is passed into.
+const WHATSAPP_MARKETING_TEMPLATE_NAME = (process.env.WHATSAPP_MARKETING_TEMPLATE_NAME || '').trim();
+const WHATSAPP_MARKETING_TEMPLATE_LANG_EN = (
+  process.env.WHATSAPP_MARKETING_TEMPLATE_LANG_EN || 'en_US'
+).trim();
+const WHATSAPP_MARKETING_TEMPLATE_LANG_AR = (
+  process.env.WHATSAPP_MARKETING_TEMPLATE_LANG_AR || 'ar'
+).trim();
+
+export const WHATSAPP_MARKETING_CONFIGURED = Boolean(
+  WHATSAPP_CLOUD_API_TOKEN && WHATSAPP_PHONE_NUMBER_ID && WHATSAPP_MARKETING_TEMPLATE_NAME
+);
+
+export async function sendWhatsAppMarketingMessage({ phoneNumber, bodyText, language }) {
+  if (!WHATSAPP_MARKETING_CONFIGURED) {
+    throw new Error('WhatsApp marketing template is not configured');
+  }
+
+  const url = `https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
+  const templateLanguage =
+    language === 'ar' ? WHATSAPP_MARKETING_TEMPLATE_LANG_AR : WHATSAPP_MARKETING_TEMPLATE_LANG_EN;
+  const to = phoneNumber.startsWith('+') ? phoneNumber.slice(1) : phoneNumber;
+
+  const body = {
+    messaging_product: 'whatsapp',
+    to,
+    type: 'template',
+    template: {
+      name: WHATSAPP_MARKETING_TEMPLATE_NAME,
+      language: { code: templateLanguage },
+      components: [
+        {
+          type: 'body',
+          parameters: [{ type: 'text', text: bodyText }],
+        },
+      ],
+    },
+  };
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${WHATSAPP_CLOUD_API_TOKEN}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => '');
+    throw new Error(`WhatsApp Cloud API broadcast failed: HTTP ${resp.status} ${txt}`);
+  }
+
+  return true;
+}
+
 async function sendViaAuthentica({ phoneNumber, code, language, method: methodOverride }) {
   const url = (
     process.env.AUTHENTICA_SEND_URL ||

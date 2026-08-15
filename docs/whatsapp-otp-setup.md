@@ -112,8 +112,60 @@ fails.
 - New WABAs start with a **messaging limit tier** (a cap on how many unique customers you can
   message in a rolling 24 hours) that increases automatically as your template's quality rating
   stays healthy — don't assume unlimited volume on day one.
-- Meta charges **per conversation** for template messages once you're past the free tier
-  included with a verified business, priced per country/category and billed via your connected
-  payment method in Business Manager. Check current WhatsApp Business Platform pricing in Meta's
-  own billing dashboard before relying on this at volume — pricing isn't something this repo can
-  track for you.
+- Meta charges **per delivered template message**, priced by category (Authentication, Utility,
+  Marketing) and the recipient's country, billed via your connected payment method in Business
+  Manager. Authentication is the cheapest category and gets cheaper per message as your volume
+  grows; Marketing (see below) does not. Check current rates in your own Business Manager billing
+  dashboard before relying on this at volume — pricing isn't something this repo can track for
+  you.
+
+## 8. Also sending broadcast/marketing messages? (optional, separate setup)
+
+The customer broadcast feature (Admin Dashboard → **Broadcast** tab) reuses the same WABA, phone
+number, and access token from steps 1–3 above, but needs its **own** approved template — Meta
+prices and reviews "Marketing" category templates separately from "Authentication" ones, and a
+template approved for OTP codes cannot be reused for promotional content.
+
+1. WhatsApp Manager → **Message Templates → Create Template**.
+2. Category: **Marketing**.
+3. Unlike Authentication templates, you write the body text yourself here. Create it with
+   **exactly one body variable**, e.g.:
+   > `{{1}}`
+
+   That's it — just the variable, nothing else in the body. The broadcast feature sends whatever
+   message the admin composes in the dashboard as that single variable, so keeping the template
+   to just `{{1}}` means any message can go out under one approved template, without needing
+   Meta to re-review a new template every time you want to send a different promo. (You can add
+   a footer or buttons in the template if you want, as long as the body stays a single variable —
+   just don't add extra required variables, since the broadcast sender only fills in one.)
+4. Add both an **English** and an **Arabic** language version, same as the OTP template.
+5. Submit for review. Marketing-template review can take longer than Authentication and is
+   sometimes rejected on first submission — Meta reviews these more strictly since they're
+   promotional.
+6. Set these on the **API service** in Railway:
+
+   ```
+   WHATSAPP_MARKETING_TEMPLATE_NAME=<the template name from step 3>
+   WHATSAPP_MARKETING_TEMPLATE_LANG_EN=en_US
+   WHATSAPP_MARKETING_TEMPLATE_LANG_AR=ar
+   ```
+
+   `WHATSAPP_CLOUD_API_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID` are shared with the OTP setup above
+   — no need to set those again. The Broadcast tab stays disabled (clearly labeled as not set up)
+   until all three Marketing variables are set; it has no effect on OTP delivery either way.
+
+**Before sending to your full customer list, know the real constraints:**
+
+- **Cost adds up fast, and doesn't get cheaper.** Marketing messages are priced noticeably higher
+  per message than Authentication or Utility, and — deliberately, on Meta's part — get **no
+  volume discount at any scale**. The Broadcast tab shows your current recipient count before you
+  send; multiply it by your account's current Marketing rate (check your Business Manager billing
+  page) to know roughly what a send will cost before confirming it.
+- **Consent affects your account's health**, even without a hard technical gate. Recipients can
+  report a marketing message as spam; enough reports lower your number's quality rating, which
+  cuts your messaging limits or can get the number restricted. This app currently sends to every
+  phone number on file with no opt-in filter, by deliberate choice — if you start seeing blocks or
+  reports, an opt-in flag is a straightforward addition to reconsider.
+- **Always test first.** Use the "Send a test to your own number" button in the Broadcast tab
+  before sending to your full list — it uses the same template and catches template-name or
+  language-code mistakes without spending real sends on customers.

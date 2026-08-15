@@ -59,6 +59,18 @@ export function getLoyaltyCycleStamps(points, cycleLength = 5) {
 }
 
 /**
+ * Whether this order should advance the customer's loyalty count. Points normally accrue on
+ * every order, but if a reward was sitting ready (5th stamp already earned) and the customer
+ * didn't redeem it this order — didn't check the box, or had nothing eligible in the cart —
+ * points must *not* advance, or that earned reward silently vanishes and the customer has to
+ * earn an entire extra cycle before it reappears. Freezing the count keeps the reward available
+ * on every subsequent order until it's actually used.
+ */
+export function shouldAccrueLoyaltyPoint({ rewardWasAvailable, rewardWasRedeemed }) {
+  return !rewardWasAvailable || Boolean(rewardWasRedeemed);
+}
+
+/**
  * Selects one eligible coffee unit. Quantity is deliberately ignored: even if
  * the customer orders several cups, only one unit is free.
  */

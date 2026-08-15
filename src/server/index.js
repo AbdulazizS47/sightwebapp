@@ -7,8 +7,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { pool, initSchema, ensureDatabase } from './db.js';
-import { sendOtpSms } from './sms.js';
-import { getLoyaltyCycleStamps, selectFreeCoffeeReward } from './loyalty.js';
+import { sendOtpSms, sendWhatsAppMarketingMessage, WHATSAPP_MARKETING_CONFIGURED } from './sms.js';
+import {
+  getLoyaltyCycleStamps,
+  selectFreeCoffeeReward,
+  shouldAccrueLoyaltyPoint,
+} from './loyalty.js';
 import {
   getOrderNotificationStatus,
   sendInventoryLowStockNotification,
@@ -557,15 +561,20 @@ async function buildOrderPricing({
   let rewardDiscountAmount = 0;
   let rewardItemId = null;
   let rewardItemName = null;
+  // Whether a free-coffee reward is sitting ready on this account, independent of whether the
+  // customer actually chose to redeem it this order — createOrderInternal uses this to decide
+  // whether to accrue a new stamp (an earned-but-unused reward must not be silently lost).
+  let loyaltyRewardAvailable = false;
 
-  if (effectiveUserId && redeemReward) {
+  if (effectiveUserId) {
     const [rows] = await db.execute(
       'SELECT points FROM loyalty_accounts WHERE userId = ? AND enabled = 1',
       [effectiveUserId]
     );
     const points = Number(rows?.[0]?.points || 0);
     const stamps = getLoyaltyCycleStamps(points, LOYALTY_REWARD_CYCLE);
-    rewardType = stamps === LOYALTY_REWARD_CYCLE ? 'free' : null;
+    loyaltyRewardAvailable = stamps === LOYALTY_REWARD_CYCLE;
+    rewardType = loyaltyRewardAvailable && redeemReward ? 'free' : null;
 
     if (rewardType === 'free') {
       const selectedReward = selectFreeCoffeeReward(
@@ -702,6 +711,7 @@ async function buildOrderPricing({
     rewardType,
     rewardApplied: rewardDiscountAmount > 0,
     rewardDiscountAmount,
+    loyaltyRewardAvailable,
     rewardItemId,
     rewardItemName,
     discountCodeRequested: discountCodeRequested || null,
@@ -1717,36 +1727,29 @@ app.get('/api/profile/loyalty', async (c) => {
     if (!sessionUser) return c.json({ error: 'Unauthorized' }, 401);
     const userId = sessionUser.id;
 
-    // Ensure loyalty reflects reality (orders drive points; loyalty auto-enables after first order)
+    // Back-fill a missing loyalty_accounts row from order history (e.g. very old data from
+    // before this table existed). Once a row exists, createOrderInternal's accrual logic is the
+    // sole source of truth for `points` and `enabled` — points may intentionally sit behind the
+    // raw order count while an earned reward is still unclaimed (see shouldAccrueLoyaltyPoint),
+    // and `enabled` may be off because the customer explicitly opted out via
+    // /api/profile/loyalty/disable. Neither is ever "corrected" back here.
     const [rows] = await pool.execute('SELECT * FROM loyalty_accounts WHERE userId = ? LIMIT 1', [
       userId,
     ]);
     const existing = Array.isArray(rows) && rows[0] ? rows[0] : null;
-    const existingPoints = existing ? Number(existing.points || 0) : 0;
-    const existingEnabled = existing ? Number(existing.enabled || 0) : 0;
-    const existingEnrollment =
-      existing && existing.enrollmentDate != null ? Number(existing.enrollmentDate) : null;
 
-    const [orderRows] = await pool.execute('SELECT COUNT(*) AS cnt FROM orders WHERE userId = ?', [
-      userId,
-    ]);
-    const orderCount = Number(orderRows?.[0]?.cnt || 0);
-
-    const points = Math.max(existingPoints, orderCount);
-    const shouldEnable = orderCount > 0;
-
-    if (!existing || existingEnabled === 0 || existingPoints !== points) {
-      const nowTs = Date.now();
-      await pool.execute(
-        'INSERT INTO loyalty_accounts (userId, points, tier, enabled, enrollmentDate) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE points=VALUES(points), enabled=VALUES(enabled), enrollmentDate=IFNULL(enrollmentDate, VALUES(enrollmentDate))',
-        [
-          userId,
-          points,
-          'basic',
-          shouldEnable ? 1 : 0,
-          existingEnrollment ?? (shouldEnable ? nowTs : null),
-        ]
-      );
+    if (!existing) {
+      const [orderRows] = await pool.execute('SELECT COUNT(*) AS cnt FROM orders WHERE userId = ?', [
+        userId,
+      ]);
+      const orderCount = Number(orderRows?.[0]?.cnt || 0);
+      if (orderCount > 0) {
+        const nowTs = Date.now();
+        await pool.execute(
+          'INSERT INTO loyalty_accounts (userId, points, tier, enabled, enrollmentDate) VALUES (?, ?, ?, 1, ?) ON DUPLICATE KEY UPDATE enabled=VALUES(enabled)',
+          [userId, orderCount, 'basic', nowTs]
+        );
+      }
     }
 
     const [freshRows] = await pool.execute(
@@ -3320,11 +3323,20 @@ async function createOrderInternal({
       'INSERT INTO loyalty_accounts (userId, points, tier, enabled, enrollmentDate) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE enabled=1, enrollmentDate=IFNULL(enrollmentDate, VALUES(enrollmentDate))',
       [effectiveUserId, 0, 'basic', 1, nowTs]
     );
-    // Accrue loyalty points (1 per order). UI derives the 5-order reward cycle from this value.
-    await pool.execute(
-      'UPDATE loyalty_accounts SET enabled=1, points = points + 1 WHERE userId = ?',
-      [effectiveUserId]
-    );
+    // Accrue loyalty points (1 per order) — but only when this order isn't leaving an already-
+    // earned reward unused. Otherwise a customer who skips redeeming on their free-cup order
+    // would silently lose it and have to earn a whole new cycle before it's offered again.
+    if (shouldAccrueLoyaltyPoint({
+      rewardWasAvailable: pricing.loyaltyRewardAvailable,
+      rewardWasRedeemed: pricing.rewardApplied,
+    })) {
+      await pool.execute(
+        'UPDATE loyalty_accounts SET enabled=1, points = points + 1 WHERE userId = ?',
+        [effectiveUserId]
+      );
+    } else {
+      await pool.execute('UPDATE loyalty_accounts SET enabled=1 WHERE userId = ?', [effectiveUserId]);
+    }
   }
 
   const orderSummary = {
@@ -3781,6 +3793,190 @@ app.get('/api/admin/customers', async (c) => {
   } catch (e) {
     console.error('Error aggregating customers', e);
     return c.json({ error: 'Failed to load customers' }, 500);
+  }
+});
+
+// WhatsApp broadcast: distinct customer phone numbers eligible to receive a broadcast — every
+// phone number that has ever placed an order or holds a customer account. No opt-in filtering
+// (by explicit choice); if that changes later, this is the one place to add the filter.
+async function getBroadcastRecipientPhoneNumbers(db = pool) {
+  const [rows] = await db.execute(`
+    SELECT DISTINCT phoneNumber FROM (
+      SELECT phoneNumber FROM orders WHERE phoneNumber IS NOT NULL AND phoneNumber <> ''
+      UNION
+      SELECT phoneNumber FROM users WHERE role = 'user' AND phoneNumber IS NOT NULL AND phoneNumber <> ''
+    ) AS recipients
+  `);
+  return (Array.isArray(rows) ? rows : []).map((row) => String(row.phoneNumber)).filter(Boolean);
+}
+
+app.get('/api/admin/broadcast/whatsapp/recipient-count', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const phones = await getBroadcastRecipientPhoneNumbers();
+    return c.json({ success: true, count: phones.length, configured: WHATSAPP_MARKETING_CONFIGURED });
+  } catch (e) {
+    console.error('Error counting broadcast recipients', e);
+    return c.json({ error: 'Failed to count recipients' }, 500);
+  }
+});
+
+app.get('/api/admin/broadcast/whatsapp', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  try {
+    const [rows] = await pool.execute(
+      `SELECT id, messageEn, messageAr, status, recipientCount, sentCount, failedCount,
+              failedNumbers, createdByUserId, createdAt, completedAt
+       FROM whatsapp_broadcasts ORDER BY createdAt DESC LIMIT 50`
+    );
+    const broadcasts = (Array.isArray(rows) ? rows : []).map((row) => ({
+      id: row.id,
+      messageEn: row.messageEn,
+      messageAr: row.messageAr,
+      status: row.status,
+      recipientCount: Number(row.recipientCount || 0),
+      sentCount: Number(row.sentCount || 0),
+      failedCount: Number(row.failedCount || 0),
+      failedNumbers: row.failedNumbers || [],
+      createdAt: Number(row.createdAt),
+      completedAt: row.completedAt != null ? Number(row.completedAt) : null,
+    }));
+    return c.json({ success: true, broadcasts, configured: WHATSAPP_MARKETING_CONFIGURED });
+  } catch (e) {
+    console.error('Error loading broadcasts', e);
+    return c.json({ error: 'Failed to load broadcasts' }, 500);
+  }
+});
+
+// Runs detached from the request — a broadcast to a real customer list can take minutes
+// (throttled to avoid tripping WhatsApp's rate limits), far longer than an HTTP request should
+// block for. The admin UI polls GET /api/admin/broadcast/whatsapp/:id for live progress.
+async function runWhatsAppBroadcast(broadcastId, recipients, messageEn, messageAr) {
+  let sentCount = 0;
+  const failedNumbers = [];
+
+  await pool.execute("UPDATE whatsapp_broadcasts SET status = 'running' WHERE id = ?", [
+    broadcastId,
+  ]);
+
+  for (const recipient of recipients) {
+    try {
+      const language = recipient.language === 'en' ? 'en' : 'ar';
+      const bodyText = language === 'en' && messageEn ? messageEn : messageAr || messageEn;
+      await sendWhatsAppMarketingMessage({
+        phoneNumber: recipient.phoneNumber,
+        bodyText,
+        language,
+      });
+      sentCount += 1;
+    } catch (error) {
+      failedNumbers.push(recipient.phoneNumber);
+      console.error('WhatsApp broadcast send failed for', recipient.phoneNumber, error?.message || error);
+    }
+
+    await pool.execute(
+      'UPDATE whatsapp_broadcasts SET sentCount = ?, failedCount = ?, failedNumbers = ? WHERE id = ?',
+      [sentCount, failedNumbers.length, JSON.stringify(failedNumbers), broadcastId]
+    );
+
+    // Stay well under WhatsApp's per-second throughput limits — this is a small customer list,
+    // not a high-volume sender, so there is no need to rush.
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+
+  await pool.execute(
+    "UPDATE whatsapp_broadcasts SET status = 'completed', completedAt = ? WHERE id = ?",
+    [Date.now(), broadcastId]
+  );
+}
+
+app.post('/api/admin/broadcast/whatsapp', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  if (!WHATSAPP_MARKETING_CONFIGURED) {
+    return c.json({ error: 'WhatsApp marketing template is not configured' }, 503);
+  }
+  try {
+    const adminUser = await getAdminSessionUserFromRequest(c);
+    const { messageEn, messageAr } = await c.req.json();
+    const trimmedEn = String(messageEn || '').trim();
+    const trimmedAr = String(messageAr || '').trim();
+    if (!trimmedEn && !trimmedAr) {
+      return c.json({ error: 'Enter a message in at least one language' }, 400);
+    }
+
+    const [phoneRows, userRows] = await Promise.all([
+      getBroadcastRecipientPhoneNumbers(),
+      pool.execute("SELECT phoneNumber, language FROM users WHERE role = 'user'"),
+    ]);
+    const languageByPhone = new Map(
+      (Array.isArray(userRows[0]) ? userRows[0] : []).map((row) => [
+        String(row.phoneNumber),
+        row.language || null,
+      ])
+    );
+    const recipients = phoneRows.map((phoneNumber) => ({
+      phoneNumber,
+      language: languageByPhone.get(phoneNumber) || null,
+    }));
+
+    if (recipients.length === 0) {
+      return c.json({ error: 'No customers to send to' }, 400);
+    }
+
+    const id = `broadcast:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const now = Date.now();
+    await pool.execute(
+      `INSERT INTO whatsapp_broadcasts
+       (id, messageEn, messageAr, status, recipientCount, sentCount, failedCount, createdByUserId, createdAt)
+       VALUES (?, ?, ?, 'pending', ?, 0, 0, ?, ?)`,
+      [id, trimmedEn || null, trimmedAr || null, recipients.length, adminUser?.id || null, now]
+    );
+
+    runWhatsAppBroadcast(id, recipients, trimmedEn, trimmedAr).catch((error) => {
+      console.error('WhatsApp broadcast run failed', id, error);
+      pool
+        .execute("UPDATE whatsapp_broadcasts SET status = 'failed', completedAt = ? WHERE id = ?", [
+          Date.now(),
+          id,
+        ])
+        .catch(() => {});
+    });
+
+    return c.json({ success: true, broadcastId: id, recipientCount: recipients.length });
+  } catch (e) {
+    console.error('Error starting WhatsApp broadcast', e);
+    return c.json({ error: 'Failed to start broadcast' }, 500);
+  }
+});
+
+app.post('/api/admin/broadcast/whatsapp/test', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  if (!WHATSAPP_MARKETING_CONFIGURED) {
+    return c.json({ error: 'WhatsApp marketing template is not configured' }, 503);
+  }
+  try {
+    const { phoneNumber, messageEn, messageAr, language } = await c.req.json();
+    const normalizedPhone = normalizeKsaPhone(phoneNumber);
+    if (!normalizedPhone) return c.json({ error: 'Invalid phone number' }, 400);
+    const effectiveLanguage = language === 'en' ? 'en' : 'ar';
+    const bodyText =
+      effectiveLanguage === 'en' && messageEn ? messageEn : messageAr || messageEn;
+    if (!String(bodyText || '').trim()) {
+      return c.json({ error: 'Enter a message in at least one language' }, 400);
+    }
+    await sendWhatsAppMarketingMessage({
+      phoneNumber: normalizedPhone,
+      bodyText: String(bodyText).trim(),
+      language: effectiveLanguage,
+    });
+    return c.json({ success: true });
+  } catch (e) {
+    console.error('Error sending WhatsApp broadcast test message', e);
+    return c.json({ error: e?.message || 'Failed to send test message' }, 500);
   }
 });
 

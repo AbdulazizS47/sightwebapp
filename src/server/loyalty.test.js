@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { getLoyaltyCycleStamps, selectFreeCoffeeReward } from './loyalty.js';
+import {
+  getLoyaltyCycleStamps,
+  selectFreeCoffeeReward,
+  shouldAccrueLoyaltyPoint,
+} from './loyalty.js';
 
 describe('getLoyaltyCycleStamps', () => {
   it('has no reward before any orders are completed', () => {
@@ -25,6 +29,29 @@ describe('getLoyaltyCycleStamps', () => {
   it('supports a non-default cycle length', () => {
     expect(getLoyaltyCycleStamps(2, 3)).toBe(3);
     expect(getLoyaltyCycleStamps(1, 3)).toBe(2);
+  });
+});
+
+describe('shouldAccrueLoyaltyPoint', () => {
+  it('accrues normally while no reward is available yet', () => {
+    expect(shouldAccrueLoyaltyPoint({ rewardWasAvailable: false, rewardWasRedeemed: false })).toBe(
+      true
+    );
+  });
+
+  it('accrues when the reward was available and actually redeemed', () => {
+    expect(shouldAccrueLoyaltyPoint({ rewardWasAvailable: true, rewardWasRedeemed: true })).toBe(
+      true
+    );
+  });
+
+  it('freezes the count when a reward was available but not redeemed', () => {
+    // Regression test: a customer who skips redeeming on their free-cup order must not lose
+    // it — the reward should still be offered on every order after, not just the one where it
+    // was first earned. Reported by a real customer whose reward vanished until 4 more orders.
+    expect(shouldAccrueLoyaltyPoint({ rewardWasAvailable: true, rewardWasRedeemed: false })).toBe(
+      false
+    );
   });
 });
 

@@ -321,6 +321,22 @@ export async function initSchema() {
   `);
 
   await pool.execute(`
+    CREATE TABLE IF NOT EXISTS whatsapp_broadcasts (
+      id VARCHAR(64) PRIMARY KEY,
+      messageEn TEXT NOT NULL,
+      messageAr TEXT NULL,
+      status VARCHAR(16) NOT NULL DEFAULT 'pending',
+      recipientCount INT NOT NULL DEFAULT 0,
+      sentCount INT NOT NULL DEFAULT 0,
+      failedCount INT NOT NULL DEFAULT 0,
+      failedNumbers JSON NULL,
+      createdByUserId VARCHAR(64) NULL,
+      createdAt BIGINT NOT NULL,
+      completedAt BIGINT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.execute(`
     CREATE TABLE IF NOT EXISTS agent_runs (
       id BIGINT PRIMARY KEY AUTO_INCREMENT,
       channel VARCHAR(32) NOT NULL,
@@ -399,6 +415,9 @@ export async function initSchema() {
     'CREATE INDEX idx_agent_runs_channel_external_created ON agent_runs(channel, externalIdHash, createdAt)'
   );
   await ensureIndex('CREATE INDEX idx_agent_runs_status_created ON agent_runs(status, createdAt)');
+  await ensureIndex(
+    'CREATE INDEX idx_whatsapp_broadcasts_created ON whatsapp_broadcasts(createdAt)'
+  );
 
   if (DEV_SEED_DISCOUNT_CODES) {
     const now = Date.now();

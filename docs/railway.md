@@ -38,6 +38,12 @@ delivery fails — see `docs/whatsapp-otp-setup.md` for the full walkthrough):
 - `WHATSAPP_OTP_TEMPLATE_LANG_EN`, `WHATSAPP_OTP_TEMPLATE_LANG_AR`
 - `WHATSAPP_OTP_TEMPLATE_HAS_BUTTON`
 - `OTP_WEB_ORIGIN=sightcoffeespace.com`
+
+Optional (customer broadcast messages, Admin Dashboard -> Broadcast tab — reuses
+`WHATSAPP_CLOUD_API_TOKEN`/`WHATSAPP_PHONE_NUMBER_ID` above with a separate Marketing-category
+template; see `docs/whatsapp-otp-setup.md` section 8):
+- `WHATSAPP_MARKETING_TEMPLATE_NAME`
+- `WHATSAPP_MARKETING_TEMPLATE_LANG_EN`, `WHATSAPP_MARKETING_TEMPLATE_LANG_AR`
 - `OTP_DEV_MODE=false` on live Railway services
 - `OTP_DEV_MODE=true` only for temporary testing without SMS
 

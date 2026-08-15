@@ -8,6 +8,7 @@ import {
   Package,
   UserCog,
   ShieldCheck,
+  Megaphone,
 } from 'lucide-react';
 import { AdminPanel } from './AdminPanel';
 import { AdminInventoryPanel } from './AdminInventoryPanel';
@@ -28,6 +29,7 @@ type Tab =
   | 'customers'
   | 'staff'
   | 'admins'
+  | 'broadcast'
   | 'settings';
 
 interface StaffAccount {
@@ -47,6 +49,19 @@ interface AdminAccount {
   isRootAdmin: boolean;
   createdAt: number;
   updatedAt: number;
+}
+
+interface BroadcastCampaign {
+  id: string;
+  messageEn: string | null;
+  messageAr: string | null;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  recipientCount: number;
+  sentCount: number;
+  failedCount: number;
+  failedNumbers: string[];
+  createdAt: number;
+  completedAt: number | null;
 }
 
 interface CustomerSummary {
@@ -92,6 +107,7 @@ export function AdminDashboard({
           tab === 'customers' ||
           tab === 'staff' ||
           tab === 'admins' ||
+          tab === 'broadcast' ||
           tab === 'settings'
         ) {
           setActiveTab(tab);
@@ -137,6 +153,17 @@ export function AdminDashboard({
   const [editingAdminId, setEditingAdminId] = useState<string | null>(null);
   const [editAdminName, setEditAdminName] = useState('');
   const [savingAdminId, setSavingAdminId] = useState<string | null>(null);
+  const [broadcastConfigured, setBroadcastConfigured] = useState(true);
+  const [broadcastRecipientCount, setBroadcastRecipientCount] = useState(0);
+  const [broadcastMessageEn, setBroadcastMessageEn] = useState('');
+  const [broadcastMessageAr, setBroadcastMessageAr] = useState('');
+  const [broadcastSending, setBroadcastSending] = useState(false);
+  const [broadcastError, setBroadcastError] = useState('');
+  const [broadcastTestPhone, setBroadcastTestPhone] = useState('');
+  const [broadcastTestSending, setBroadcastTestSending] = useState(false);
+  const [broadcastTestResult, setBroadcastTestResult] = useState('');
+  const [broadcasts, setBroadcasts] = useState<BroadcastCampaign[]>([]);
+  const [broadcastsLoading, setBroadcastsLoading] = useState(false);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [isOpenSetting, setIsOpenSetting] = useState(true);
   const [computedOpenSetting, setComputedOpenSetting] = useState(true);
@@ -183,6 +210,29 @@ export function AdminDashboard({
       convertAdminPrompt: 'An existing account already uses this phone number. Convert it to an admin account instead?',
       convertAdminConfirm: 'Convert to Admin',
       rootAdminOnly: 'Only the primary admin can manage admin accounts.',
+      broadcastTab: 'Broadcast',
+      broadcastNotConfigured:
+        'WhatsApp marketing is not set up yet. See docs/whatsapp-otp-setup.md to configure a Marketing template.',
+      broadcastMessageEnLabel: 'Message (English)',
+      broadcastMessageArLabel: 'Message (Arabic)',
+      broadcastRecipientCount: 'This will send to',
+      broadcastCustomers: 'customers',
+      broadcastCostNote: 'Rough estimate only — Marketing messages have no volume discount.',
+      broadcastSend: 'Send Broadcast',
+      broadcastSending: 'Sending...',
+      broadcastConfirm: 'Send this message to {count} customers on WhatsApp? This cannot be undone.',
+      broadcastTestLabel: 'Send a test to your own number first',
+      broadcastTestPlaceholder: '05XXXXXXXX',
+      broadcastTestSend: 'Send Test',
+      broadcastTestSent: 'Test message sent',
+      broadcastHistory: 'Recent Broadcasts',
+      broadcastNoHistory: 'No broadcasts sent yet',
+      broadcastStatusPending: 'Starting',
+      broadcastStatusRunning: 'Sending',
+      broadcastStatusCompleted: 'Completed',
+      broadcastStatusFailed: 'Failed',
+      broadcastSentOf: 'sent',
+      broadcastFailedOf: 'failed',
       refresh: 'Refresh',
       cleanupSeed: 'Remove Seed Items',
       openStatus: 'Open Status',
@@ -253,6 +303,29 @@ export function AdminDashboard({
       convertAdminPrompt: 'يوجد حساب بهذا الرقم بالفعل. هل تريد تحويله إلى حساب مدير؟',
       convertAdminConfirm: 'تحويل إلى مدير',
       rootAdminOnly: 'يمكن فقط للمدير الأساسي إدارة حسابات المدراء.',
+      broadcastTab: 'البث',
+      broadcastNotConfigured:
+        'لم يتم إعداد رسائل واتساب التسويقية بعد. راجع docs/whatsapp-otp-setup.md لإعداد قالب تسويقي.',
+      broadcastMessageEnLabel: 'الرسالة (إنجليزي)',
+      broadcastMessageArLabel: 'الرسالة (عربي)',
+      broadcastRecipientCount: 'سيتم الإرسال إلى',
+      broadcastCustomers: 'عميل',
+      broadcastCostNote: 'تقدير تقريبي فقط — رسائل التسويق لا تحصل على خصم كمية.',
+      broadcastSend: 'إرسال البث',
+      broadcastSending: 'جارٍ الإرسال...',
+      broadcastConfirm: 'إرسال هذه الرسالة إلى {count} عميل عبر واتساب؟ لا يمكن التراجع عن هذا.',
+      broadcastTestLabel: 'أرسل رسالة تجريبية لرقمك أولاً',
+      broadcastTestPlaceholder: '05XXXXXXXX',
+      broadcastTestSend: 'إرسال تجريبي',
+      broadcastTestSent: 'تم إرسال الرسالة التجريبية',
+      broadcastHistory: 'عمليات البث الأخيرة',
+      broadcastNoHistory: 'لا يوجد بث سابق بعد',
+      broadcastStatusPending: 'جارٍ البدء',
+      broadcastStatusRunning: 'جارٍ الإرسال',
+      broadcastStatusCompleted: 'مكتمل',
+      broadcastStatusFailed: 'فشل',
+      broadcastSentOf: 'أُرسل',
+      broadcastFailedOf: 'فشل',
       refresh: 'تحديث',
       cleanupSeed: 'حذف العناصر الأولية',
       openStatus: 'حالة المتجر',
@@ -552,6 +625,108 @@ export function AdminDashboard({
     }
   };
 
+  const loadBroadcastRecipientCount = async () => {
+    try {
+      const res = await fetch(`${apiBaseUrl}/admin/broadcast/whatsapp/recipient-count`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setBroadcastRecipientCount(data.count || 0);
+        setBroadcastConfigured(Boolean(data.configured));
+      }
+    } catch (e) {
+      console.error('Error loading broadcast recipient count', e);
+    }
+  };
+
+  const loadBroadcasts = async () => {
+    setBroadcastsLoading(true);
+    try {
+      const res = await fetch(`${apiBaseUrl}/admin/broadcast/whatsapp`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setBroadcasts(data.broadcasts || []);
+        setBroadcastConfigured(Boolean(data.configured));
+      }
+    } catch (e) {
+      console.error('Error loading broadcasts', e);
+    } finally {
+      setBroadcastsLoading(false);
+    }
+  };
+
+  const sendBroadcastTest = async () => {
+    setBroadcastTestResult('');
+    setBroadcastError('');
+    if (!broadcastTestPhone.trim()) return;
+    setBroadcastTestSending(true);
+    try {
+      const res = await fetch(`${apiBaseUrl}/admin/broadcast/whatsapp/test`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({
+          phoneNumber: broadcastTestPhone.trim(),
+          messageEn: broadcastMessageEn.trim(),
+          messageAr: broadcastMessageAr.trim(),
+          language,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setBroadcastError(data.error || 'Failed to send test message');
+        return;
+      }
+      setBroadcastTestResult(text.broadcastTestSent);
+    } catch (e) {
+      console.error('Error sending broadcast test', e);
+      setBroadcastError('Failed to send test message');
+    } finally {
+      setBroadcastTestSending(false);
+    }
+  };
+
+  const sendBroadcast = async () => {
+    setBroadcastError('');
+    if (!broadcastMessageEn.trim() && !broadcastMessageAr.trim()) return;
+    const confirmed = window.confirm(
+      text.broadcastConfirm.replace('{count}', String(broadcastRecipientCount))
+    );
+    if (!confirmed) return;
+    setBroadcastSending(true);
+    try {
+      const res = await fetch(`${apiBaseUrl}/admin/broadcast/whatsapp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({
+          messageEn: broadcastMessageEn.trim(),
+          messageAr: broadcastMessageAr.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setBroadcastError(data.error || 'Failed to start broadcast');
+        return;
+      }
+      setBroadcastMessageEn('');
+      setBroadcastMessageAr('');
+      await loadBroadcasts();
+    } catch (e) {
+      console.error('Error starting broadcast', e);
+      setBroadcastError('Failed to start broadcast');
+    } finally {
+      setBroadcastSending(false);
+    }
+  };
+
   const loadSettings = async () => {
     setSettingsLoading(true);
     try {
@@ -608,6 +783,21 @@ export function AdminDashboard({
       loadAdmins();
     }
   }, [activeTab, isRootAdmin]);
+
+  useEffect(() => {
+    if (activeTab === 'broadcast') {
+      loadBroadcastRecipientCount();
+      loadBroadcasts();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'broadcast') return;
+    const hasActiveRun = broadcasts.some((b) => b.status === 'pending' || b.status === 'running');
+    if (!hasActiveRun) return;
+    const t = setInterval(loadBroadcasts, 3000);
+    return () => clearInterval(t);
+  }, [activeTab, broadcasts]);
 
   useEffect(() => {
     if (activeTab === 'settings') {
@@ -821,6 +1011,12 @@ export function AdminDashboard({
               <ShieldCheck size={16} /> {text.adminsTab}
             </button>
           )}
+          <button
+            className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 whitespace-nowrap shrink-0 ${activeTab === 'broadcast' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
+            onClick={() => setTab('broadcast')}
+          >
+            <Megaphone size={16} /> {text.broadcastTab}
+          </button>
           <button
             className={`px-3 py-2 border-2 rounded-md flex items-center gap-2 whitespace-nowrap shrink-0 ${activeTab === 'settings' ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]' : 'border-[var(--matte-black)] text-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)]'}`}
             onClick={() => setTab('settings')}
@@ -1272,6 +1468,154 @@ export function AdminDashboard({
                     })}
                   </tbody>
                 </table>
+              </div>
+            )}
+          </div>
+        )}
+        {activeTab === 'broadcast' && (
+          <div>
+            {!broadcastConfigured && (
+              <div className="border-2 border-[var(--matte-black)] p-4 bg-[var(--cool-gray)] text-sm text-[var(--matte-black)] mb-4">
+                {text.broadcastNotConfigured}
+              </div>
+            )}
+            <div className="border-2 border-[var(--matte-black)] p-4 bg-[var(--crisp-white)] mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm text-[var(--matte-black)] opacity-70">
+                    {text.broadcastMessageEnLabel}
+                  </label>
+                  <textarea
+                    value={broadcastMessageEn}
+                    onChange={(e) => setBroadcastMessageEn(e.target.value)}
+                    rows={4}
+                    dir="ltr"
+                    className="w-full mt-1 px-3 py-2 border-2 border-[var(--matte-black)] text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-[var(--matte-black)] opacity-70">
+                    {text.broadcastMessageArLabel}
+                  </label>
+                  <textarea
+                    value={broadcastMessageAr}
+                    onChange={(e) => setBroadcastMessageAr(e.target.value)}
+                    rows={4}
+                    dir="rtl"
+                    className="w-full mt-1 px-3 py-2 border-2 border-[var(--matte-black)] text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="text-sm text-[var(--matte-black)] mt-3">
+                {text.broadcastRecipientCount}{' '}
+                <span className="font-bold">{broadcastRecipientCount}</span>{' '}
+                {text.broadcastCustomers}
+              </div>
+              <div className="text-xs text-[var(--matte-black)] opacity-60 mt-1">
+                {text.broadcastCostNote}
+              </div>
+
+              {broadcastError && <div className="text-red-600 text-sm mt-3">{broadcastError}</div>}
+
+              <div className="flex flex-wrap items-center gap-2 mt-3">
+                <input
+                  value={broadcastTestPhone}
+                  onChange={(e) => setBroadcastTestPhone(e.target.value)}
+                  placeholder={text.broadcastTestPlaceholder}
+                  dir="ltr"
+                  className="px-3 py-2 border-2 border-[var(--matte-black)] text-sm"
+                />
+                <button
+                  onClick={sendBroadcastTest}
+                  disabled={
+                    !broadcastConfigured ||
+                    broadcastTestSending ||
+                    !broadcastTestPhone.trim() ||
+                    (!broadcastMessageEn.trim() && !broadcastMessageAr.trim())
+                  }
+                  className="px-3 py-2 border-2 border-[var(--matte-black)] text-sm hover:bg-[var(--cool-gray)] disabled:opacity-50"
+                >
+                  {broadcastTestSending ? '...' : text.broadcastTestSend}
+                </button>
+                {broadcastTestResult && (
+                  <span className="text-sm text-green-700">{broadcastTestResult}</span>
+                )}
+              </div>
+              <div className="text-xs text-[var(--matte-black)] opacity-60 mt-1">
+                {text.broadcastTestLabel}
+              </div>
+
+              <button
+                onClick={sendBroadcast}
+                disabled={
+                  !broadcastConfigured ||
+                  broadcastSending ||
+                  broadcastRecipientCount === 0 ||
+                  (!broadcastMessageEn.trim() && !broadcastMessageAr.trim())
+                }
+                className="mt-4 px-4 py-2 bg-[var(--espresso-brown)] text-[var(--crisp-white)] hover:bg-[var(--matte-black)] transition-colors text-sm disabled:opacity-50"
+              >
+                {broadcastSending ? text.broadcastSending : text.broadcastSend}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-[var(--matte-black)]">{text.broadcastHistory}</h3>
+              <button
+                onClick={loadBroadcasts}
+                disabled={broadcastsLoading}
+                className="text-[var(--matte-black)] hover:text-[var(--espresso-brown)] transition-colors disabled:opacity-50"
+                aria-label={text.refresh}
+              >
+                <RefreshCw size={18} className={broadcastsLoading ? 'animate-spin' : ''} />
+              </button>
+            </div>
+
+            {broadcasts.length === 0 ? (
+              <div className="text-[var(--matte-black)]">
+                {broadcastsLoading ? '...' : text.broadcastNoHistory}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {broadcasts.map((b) => {
+                  const statusText =
+                    b.status === 'pending'
+                      ? text.broadcastStatusPending
+                      : b.status === 'running'
+                        ? text.broadcastStatusRunning
+                        : b.status === 'failed'
+                          ? text.broadcastStatusFailed
+                          : text.broadcastStatusCompleted;
+                  return (
+                    <div
+                      key={b.id}
+                      className="border-2 border-[var(--matte-black)] p-3 bg-[var(--crisp-white)] text-sm"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0 flex-1 truncate text-[var(--matte-black)]">
+                          {language === 'en'
+                            ? b.messageEn || b.messageAr
+                            : b.messageAr || b.messageEn}
+                        </div>
+                        <span className="text-xs uppercase tracking-wider text-[var(--matte-black)] opacity-70 shrink-0">
+                          {statusText}
+                        </span>
+                      </div>
+                      <div className="text-xs text-[var(--matte-black)] opacity-60 mt-1">
+                        {b.sentCount}/{b.recipientCount} {text.broadcastSentOf}
+                        {b.failedCount > 0 && (
+                          <>
+                            {' '}
+                            · {b.failedCount} {text.broadcastFailedOf}
+                          </>
+                        )}
+                        {' · '}
+                        {new Date(b.createdAt).toLocaleString()}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
