@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, Plus, Edit2, X } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, RefreshCw, Plus, Edit2, X, Trash2 } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { getImageUploadError, prepareImageUpload } from '../utils/imageUpload';
 import { apiBaseUrl } from '../utils/api';
@@ -86,6 +86,11 @@ export function AdminPanel({
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
   const [bulkCompleting, setBulkCompleting] = useState(false);
+  const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
+  const deletionPending = useRef(false);
+  const ordersRequest = useRef(0);
+  const [orderMessage, setOrderMessage] = useState('');
+  const [orderError, setOrderError] = useState('');
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [showNewCategory, setShowNewCategory] = useState(false);
@@ -130,6 +135,12 @@ export function AdminPanel({
       completeAllSuccessWithRemaining:
         'Completed {count} live orders. {remaining} newer live orders remain.',
       completeAllError: 'Failed to complete live orders',
+      deleteOrder: 'Delete order',
+      deletingOrder: 'Deleting...',
+      deleteConfirm: 'Permanently delete order {order}? Its recorded inventory deductions will be restored, loyalty effects reversed, and the order removed from sales and discount usage. This does not issue a payment refund.',
+      deleteSuccess: 'Order deleted. Recorded inventory deductions and related effects have been reversed.',
+      deleteLegacy: 'Loyalty for this older order was estimated from saved order history.',
+      deleteError: 'Could not delete the order. Please refresh and try again.',
       refresh: 'Refresh',
       filterAll: 'All',
       search: 'Search',
@@ -183,6 +194,12 @@ export function AdminPanel({
       completeAllSuccessWithRemaining:
         'تم إكمال {count} من الطلبات المباشرة. تبقّى {remaining} من الطلبات المباشرة الأحدث.',
       completeAllError: 'تعذّر إكمال الطلبات المباشرة',
+      deleteOrder: 'حذف الطلب',
+      deletingOrder: 'جارٍ الحذف...',
+      deleteConfirm: 'حذف الطلب {order} نهائيًا؟ ستُعاد كميات المخزون المخصومة وتُعكس آثار الولاء، ويُحذف الطلب من المبيعات واستخدامات الخصم. هذا الإجراء لا يعيد مبلغ الدفع للعميل.',
+      deleteSuccess: 'تم حذف الطلب وإعادة كميات المخزون المخصومة وعكس الآثار المرتبطة به.',
+      deleteLegacy: 'تم تقدير أثر الولاء لهذا الطلب القديم من سجل الطلبات المحفوظ.',
+      deleteError: 'تعذّر حذف الطلب. يرجى التحديث والمحاولة مجددًا.',
       refresh: 'تحديث',
       filterAll: 'الكل',
       search: 'بحث',
@@ -271,6 +288,7 @@ export function AdminPanel({
   }, [activeTab, mode, bulkCompleting]);
 
   const loadOrders = async ({ silent }: { silent?: boolean } = {}) => {
+    const request = ++ordersRequest.current;
     if (!silent) setLoading(true);
     try {
       const endpoint = mode === 'history' ? 'history' : 'active';
@@ -306,7 +324,7 @@ export function AdminPanel({
 
       const data = await response.json();
 
-      if (data.success) {
+      if (data.success && request === ordersRequest.current) {
         setOrders(data.orders.sort((a: Order, b: Order) => b.createdAt - a.createdAt));
       }
     } catch (error) {
@@ -351,6 +369,36 @@ export function AdminPanel({
       }
     } catch (e) {
       console.error('Failed to load history days', e);
+    }
+  };
+
+  const handleDeleteOrder = async (order: Order) => {
+    if (deletionPending.current) return;
+    const label = order.orderNumber || order.id.replace('order:', '');
+    if (!window.confirm(text.deleteConfirm.replace('{order}', label))) return;
+    deletionPending.current = true;
+    setDeletingOrderId(order.id);
+    setOrderMessage('');
+    setOrderError('');
+    ++ordersRequest.current;
+    try {
+      const response = await fetch(`${apiBaseUrl}/admin/orders/${encodeURIComponent(order.id)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(text.deleteError);
+      ++ordersRequest.current;
+      setOrders((previous) => previous.filter((row) => row.id !== order.id));
+      setOrderMessage(`${text.deleteSuccess}${data.loyaltyReconstructed ? ` ${text.deleteLegacy}` : ''}`);
+      await loadHistoryDays();
+      // A dashboard refresh failure must not turn a successful delete into an error.
+      try { await onOrdersChanged?.(); } catch (error) { console.error('Failed to refresh order stats', error); }
+    } catch (error) {
+      setOrderError(error instanceof Error ? error.message : text.deleteError);
+    } finally {
+      deletionPending.current = false;
+      setDeletingOrderId(null);
     }
   };
 
@@ -889,6 +937,8 @@ export function AdminPanel({
           </div>
         </div>
 
+        {orderMessage && <div role="status" className="mb-4 border border-emerald-700 bg-emerald-50 p-3 text-sm text-emerald-900">{orderMessage}</div>}
+        {orderError && <div role="alert" className="mb-4 border border-red-700 bg-red-50 p-3 text-sm text-red-800">{orderError}</div>}
         {loading ? (
           <div className="text-center py-16 text-[var(--matte-black)] opacity-50">Loading...</div>
         ) : activeTab === 'orders' && orders.length === 0 ? (
@@ -1120,9 +1170,16 @@ export function AdminPanel({
                           </div>
                         </div>
 
-                        <div className="text-sm text-[var(--matte-black)]">
-                          {text.orders}
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteOrder(order)}
+                          disabled={deletingOrderId !== null}
+                          aria-label={`${text.deleteOrder} ${order.orderNumber || orderNum}`}
+                          className="inline-flex items-center gap-2 border-2 border-red-700 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+                        >
+                          <Trash2 size={16} aria-hidden="true" />
+                          {deletingOrderId === order.id ? text.deletingOrder : text.deleteOrder}
+                        </button>
                       </div>
 
                       {/* Order Items */}

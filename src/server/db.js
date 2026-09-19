@@ -378,6 +378,14 @@ export async function initSchema() {
   await ensureColumn('ALTER TABLE users ADD COLUMN phoneVerified TINYINT(1) NOT NULL DEFAULT 1');
   await ensureColumn('ALTER TABLE users ADD COLUMN createdBy VARCHAR(64) NULL');
   await ensureColumn('ALTER TABLE orders ADD COLUMN createdByUserId VARCHAR(64) NULL');
+  // Required by transactional order creation/deletion; fail startup on real migration errors.
+  for (const column of ['loyaltyPointsEarned TINYINT NULL', 'loyaltyPointsEstimated TINYINT NOT NULL DEFAULT 0']) {
+    try {
+      await pool.execute(`ALTER TABLE orders ADD COLUMN ${column}`);
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+    }
+  }
   await ensureIndex('CREATE INDEX idx_orders_createdByUserId ON orders(createdByUserId)');
   await ensureIndex('CREATE INDEX idx_users_role ON users(role)');
   await ensureIndex('CREATE UNIQUE INDEX idx_orders_orderNumber ON orders(orderNumber)');

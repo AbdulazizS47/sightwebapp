@@ -423,6 +423,15 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
 
   useEffect(() => {
     loadInventorySummary();
+    const refresh = () => {
+      if (document.visibilityState !== 'hidden') void loadInventorySummary({ silent: true });
+    };
+    const timer = window.setInterval(refresh, 10000);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+    };
   }, [sessionToken]);
 
   const inventoryItemsById = useMemo(() => {
@@ -904,12 +913,19 @@ export function AdminInventoryPanel({ sessionToken, language }: AdminInventoryPa
     }
   };
 
+  const expandedUpdatedAt = inventoryItems.find((item) => item.id === expandedItemId)?.updatedAt;
+  useEffect(() => {
+    if (expandedItemId) void loadItemMovements(expandedItemId, { force: true });
+  }, [expandedItemId, expandedUpdatedAt]);
+
   const formatMovementReason = (reason: string) => {
     if (reason === 'restock') return t.restock;
     if (reason === 'adjustment') return t.reasonAdjustment;
     if (reason === 'waste') return t.reasonWaste;
     if (reason === 'correction') return t.reasonCorrection;
     if (reason === 'sale') return t.reasonSale;
+    if (reason === 'order_deletion') return language === 'ar' ? 'إعادة المخزون بعد حذف الطلب' : 'Stock restored after order deletion';
+    if (reason === 'deleted_order') return language === 'ar' ? 'حركة طلب محذوف' : 'Original movement of deleted order';
     return reason;
   };
 

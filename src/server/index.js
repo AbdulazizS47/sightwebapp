@@ -7,6 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { pool, initSchema, ensureDatabase } from './db.js';
+import { deleteOrderAndRestore } from './order-deletion.js';
 import { sendOtpSms, sendWhatsAppMarketingMessage, WHATSAPP_MARKETING_CONFIGURED } from './sms.js';
 import {
   getLoyaltyCycleStamps,
@@ -2245,7 +2246,7 @@ app.get('/api/admin/inventory/item/:id/movements', async (c) => {
     const id = String(c.req.param('id') || '').trim();
     if (!id) return c.json({ error: 'Inventory item id is required' }, 400);
     const requestedLimit = Number(c.req.query('limit') || 8);
-    const limit = Math.max(1, Math.min(Number.isFinite(requestedLimit) ? requestedLimit : 8, 50));
+    const limit = Math.trunc(Math.max(1, Math.min(Number.isFinite(requestedLimit) ? requestedLimit : 8, 50)));
 
     const [rows] = await pool.execute(
       `SELECT
@@ -2255,8 +2256,8 @@ app.get('/api/admin/inventory/item/:id/movements', async (c) => {
        LEFT JOIN users u ON u.id = m.createdByUserId
        WHERE m.inventoryItemId = ?
        ORDER BY m.createdAt DESC, m.id DESC
-       LIMIT ?`,
-      [id, limit]
+       LIMIT ${limit}`,
+      [id]
     );
 
     return c.json({
@@ -3045,16 +3046,9 @@ async function createOrderInternal({
     items,
     effectiveLanguage
   );
-  const pricing = await buildOrderPricing({
-    canonicalItems,
-    effectiveUserId,
-    effectiveLanguage,
-    redeemReward: Boolean(redeemReward),
-    discountCode,
-    strictDiscountCode: true,
-  });
-  const effectiveItems = pricing.effectiveItems;
-  const effectiveTotal = pricing.total;
+  let pricing;
+  let effectiveItems;
+  let effectiveTotal;
 
   const dateKey = await getCurrentDateKey();
   const paymentMethodValue = paymentMethod || 'cash';
@@ -3072,6 +3066,20 @@ async function createOrderInternal({
   try {
     await conn.beginTransaction();
     txOpen = true;
+    if (effectiveUserId) {
+      await conn.execute('SELECT id FROM users WHERE id = ? FOR UPDATE', [effectiveUserId]);
+    }
+    pricing = await buildOrderPricing({
+      canonicalItems,
+      effectiveUserId,
+      effectiveLanguage,
+      redeemReward: Boolean(redeemReward),
+      discountCode,
+      strictDiscountCode: true,
+      db: conn,
+    });
+    effectiveItems = pricing.effectiveItems;
+    effectiveTotal = pricing.total;
 
     const [usageRows] =
       ids.length > 0
@@ -3281,6 +3289,32 @@ async function createOrderInternal({
       }
     }
 
+    // Loyalty: automatically enable after first order and accrue stamps
+    const loyaltyPointsEarned = effectiveUserId && shouldAccrueLoyaltyPoint({
+      rewardWasAvailable: pricing.loyaltyRewardAvailable,
+      rewardWasRedeemed: pricing.rewardApplied,
+    }) ? 1 : 0;
+    if (effectiveUserId) {
+      const nowTs = Date.now();
+      await conn.execute(
+        'INSERT INTO loyalty_accounts (userId, points, tier, enabled, enrollmentDate) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE enabled=1, enrollmentDate=IFNULL(enrollmentDate, VALUES(enrollmentDate))',
+        [effectiveUserId, 0, 'basic', 1, nowTs]
+      );
+      // Accrue loyalty points (1 per order) — but only when this order isn't leaving an already-
+      // earned reward unused. Otherwise a customer who skips redeeming on their free-cup order
+      // would silently lose it and have to earn a whole new cycle before it's offered again.
+      if (loyaltyPointsEarned) {
+        await conn.execute(
+          'UPDATE loyalty_accounts SET enabled=1, points = points + 1 WHERE userId = ?',
+          [effectiveUserId]
+        );
+      } else {
+        await conn.execute('UPDATE loyalty_accounts SET enabled=1 WHERE userId = ?', [effectiveUserId]);
+      }
+    }
+
+    await conn.execute('UPDATE orders SET loyaltyPointsEarned = ? WHERE id = ?', [loyaltyPointsEarned, orderId]);
+
     // Enqueue print job (best-effort)
     try {
       await conn.execute(
@@ -3316,28 +3350,6 @@ async function createOrderInternal({
     });
   }
 
-  // Loyalty: automatically enable after first order and accrue stamps
-  if (effectiveUserId) {
-    const nowTs = Date.now();
-    await pool.execute(
-      'INSERT INTO loyalty_accounts (userId, points, tier, enabled, enrollmentDate) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE enabled=1, enrollmentDate=IFNULL(enrollmentDate, VALUES(enrollmentDate))',
-      [effectiveUserId, 0, 'basic', 1, nowTs]
-    );
-    // Accrue loyalty points (1 per order) — but only when this order isn't leaving an already-
-    // earned reward unused. Otherwise a customer who skips redeeming on their free-cup order
-    // would silently lose it and have to earn a whole new cycle before it's offered again.
-    if (shouldAccrueLoyaltyPoint({
-      rewardWasAvailable: pricing.loyaltyRewardAvailable,
-      rewardWasRedeemed: pricing.rewardApplied,
-    })) {
-      await pool.execute(
-        'UPDATE loyalty_accounts SET enabled=1, points = points + 1 WHERE userId = ?',
-        [effectiveUserId]
-      );
-    } else {
-      await pool.execute('UPDATE loyalty_accounts SET enabled=1 WHERE userId = ?', [effectiveUserId]);
-    }
-  }
 
   const orderSummary = {
     id: orderId,
@@ -4575,6 +4587,24 @@ app.post('/api/admin/orders/complete-all', async (c) => {
       await releaseNamedLock(conn, ORDER_FINALIZATION_LOCK_NAME);
     }
     conn.release();
+  }
+});
+
+// Delete an order and reverse its recorded effects atomically (admin only).
+app.delete('/api/admin/orders/:id', async (c) => {
+  const unauthorized = await requireAdmin(c);
+  if (unauthorized) return unauthorized;
+  const raw = String(c.req.param('id') || '').trim();
+  const id = raw.startsWith('order:') ? raw : `order:${raw}`;
+  if (!/^order:\d{8}-\d{3,}$/.test(id)) return c.json({ error: 'Invalid order id' }, 400);
+  try {
+    const bearer = (c.req.header('Authorization') || '').replace(/^Bearer /, '');
+    const actor = await getSessionUser(bearer);
+    const result = await deleteOrderAndRestore(pool, id, actor?.id || null, LOYALTY_REWARD_CYCLE);
+    return c.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error deleting order', error);
+    return c.json({ error: 'Unable to confirm order deletion. Refresh before trying again.' }, 500);
   }
 });
 
