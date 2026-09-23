@@ -1,3 +1,4 @@
+import { PromotionFields, PromotionPicker, promoKey, type Promotion, type PromoSelection } from './PromotionControls';
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { Plus, ShoppingBag, ArrowLeft, Edit2, Save, Trash2, Coffee, Slash } from 'lucide-react';
 import categoryFallback from 'figma:asset/6a698afc3834913c1c2ac422fa5bd04b815dc28c.png';
@@ -11,6 +12,7 @@ import { apiBaseUrl } from '../utils/api';
 import { resolveImageUrl } from '../utils/media';
 
 interface MenuItem {
+  promotion?: Promotion | null;
   id: string;
   nameEn: string;
   nameAr: string;
@@ -33,6 +35,7 @@ interface Category {
 type DrinkTemperature = 'hot' | 'iced';
 
 interface CartItem {
+  selections?: PromoSelection[];
   id: string;
   cartKey?: string;
   nameEn: string;
@@ -75,6 +78,7 @@ export function MenuPage({
   adminMode,
 }: MenuPageProps) {
   const [categories, setCategories] = useState<Category[]>([]);
+  const [promoItem, setPromoItem] = useState<MenuItem | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [activeCategory, setActiveCategory] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -355,7 +359,7 @@ export function MenuPage({
     }
   };
 
-  const hasTemperatureChoice = (item: MenuItem) => item.category.toLowerCase() === 'v60';
+  const hasTemperatureChoice = (item: MenuItem) => !item.promotion && item.category.toLowerCase() === 'v60';
 
   const getSelectedTemperature = (item: MenuItem): DrinkTemperature =>
     selectedTemperatures[item.id] || 'iced';
@@ -364,6 +368,7 @@ export function MenuPage({
     temperature ? `${item.id}:${temperature}` : item.id;
 
   const addToCart = (item: MenuItem) => {
+    if (item.promotion) { setPromoItem(item); return; }
     const temperature = hasTemperatureChoice(item) ? getSelectedTemperature(item) : undefined;
     const cartKey = getCartKey(item, temperature);
     setCardQuantities((prev) => ({
@@ -390,6 +395,7 @@ export function MenuPage({
 
   const changeItemQuantity = (item: MenuItem, delta: number) => {
     if (!delta) return;
+    if (item.promotion) { if (delta > 0) setPromoItem(item); return; }
     const temperature = hasTemperatureChoice(item) ? getSelectedTemperature(item) : undefined;
     const cartKey = getCartKey(item, temperature);
     setCardQuantities((prev) => {
@@ -615,6 +621,7 @@ export function MenuPage({
       });
 
       const data = await response.json();
+      if (!response.ok) { alert(data.error || 'Failed to create item'); return; }
 
       if (data.success) {
         setShowNewItem(false);
@@ -767,6 +774,11 @@ export function MenuPage({
 
   return (
     <div className="min-h-screen bg-[var(--crisp-white)]" dir={isRTL ? 'rtl' : 'ltr'}>
+      {promoItem && <PromotionPicker item={promoItem} items={menuItems} language={language} onClose={() => setPromoItem(null)} onAdd={selections => {
+        const cartKey = promoKey(promoItem.id, selections);
+        setCart(prev => { const existing = prev.find(i => i.cartKey === cartKey); return existing ? prev.map(i => i.cartKey === cartKey ? { ...i, quantity: i.quantity + 1 } : i) : [...prev, { ...promoItem, selections, cartKey, quantity: 1 }]; });
+        setPromoItem(null);
+      }} />}
       {/* Header */}
       {/* Fixed below the global top bar (pt-9 in App.tsx) */}
       <div
@@ -1118,7 +1130,7 @@ export function MenuPage({
                       } ${!item.available && canEdit ? 'opacity-50' : ''}`}
                     >
                       {editingItem === item.id ? (
-                        <div className="p-3 space-y-2.5">
+                        <div className="p-3 space-y-2.5"><PromotionFields value={item.promotion} ownId={item.id} onChange={promotion => setMenuItems(prev => prev.map(i => i.id === item.id ? { ...i, promotion } : i))} items={menuItems} language={language} />
                           <div className="flex gap-2">
                             <input
                               type="text"
@@ -1267,6 +1279,7 @@ export function MenuPage({
                             <div>
                               <h3 className="text-base mb-1">
                                 {language === 'en' ? item.nameEn : item.nameAr}
+                                {item.promotion && <span className="block text-xs text-[var(--espresso-brown)]">{language === 'ar' ? `عرض · اختر ${item.promotion.count}` : `Promotion · Choose ${item.promotion.count}`}</span>}
                                 {canEdit && !item.available && (
                                   <span className="ml-1.5 text-[10px] text-red-600">(Hidden)</span>
                                 )}
@@ -1406,7 +1419,7 @@ export function MenuPage({
                         <h3 className="text-sm mb-3">
                           Add New Item to {language === 'en' ? category.nameEn : category.nameAr}
                         </h3>
-                        <div className="space-y-3">
+                        <div className="space-y-3"><PromotionFields value={newItem.promotion} onChange={promotion => setNewItem({ ...newItem, promotion })} items={menuItems} language={language} />
                           <div className="flex gap-2">
                             <input
                               type="text"

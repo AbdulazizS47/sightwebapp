@@ -1,3 +1,4 @@
+import { parsePromotion, validatePromotion, validateSelections } from './promotions.js';
 import 'dotenv/config';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -396,7 +397,7 @@ async function loadCanonicalOrderItems(items, effectiveLanguage, db = pool) {
       const temperature = ['hot', 'iced'].includes(String(it?.options?.temperature || ''))
         ? String(it.options.temperature)
         : null;
-      return { id, quantity, options: temperature ? { temperature } : undefined };
+      return { id, quantity, selections: it?.selections, options: temperature ? { temperature } : undefined };
     })
     .filter((it) => it.id);
 
@@ -413,6 +414,7 @@ async function loadCanonicalOrderItems(items, effectiveLanguage, db = pool) {
        i.nameAr,
        i.price,
        i.available,
+       i.promotion,
        i.category,
        c.nameEn AS categoryNameEn,
        c.nameAr AS categoryNameAr
@@ -434,20 +436,46 @@ async function loadCanonicalOrderItems(items, effectiveLanguage, db = pool) {
     throw createHttpError(400, 'Some items are unavailable', { unavailable });
   }
 
-  const canonicalItems = normalizedItems.map((it) => {
+  const inventoryItems = [];
+  const canonicalItems = await Promise.all(normalizedItems.map(async (it) => {
     const row = byId.get(it.id);
+    const promotion = parsePromotion(row.promotion);
+    let components = [];
+    if (promotion) {
+      try { validateSelections(promotion, it.selections); }
+      catch (error) { throw createHttpError(400, error.message); }
+      const selectionIds = it.selections.map(s => s.id);
+      const [selectedRows] = await db.execute(`SELECT id, promotion, category FROM items WHERE id IN (${selectionIds.map(() => '?').join(',')})`, selectionIds);
+      if (selectedRows.some(r => parsePromotion(r.promotion))) throw createHttpError(400, 'Nested promotions are not supported');
+      for (const selection of it.selections) {
+        const selected = selectedRows.find(r => r.id === selection.id);
+        if (selected?.category?.toLowerCase() === 'v60' && !['hot', 'iced'].includes(selection.temperature)) {
+          throw createHttpError(400, 'Choose hot or iced for each V60 drink');
+        }
+        if (selected && selected.category.toLowerCase() !== 'v60' && selection.temperature) {
+          throw createHttpError(400, 'Temperature selection is not supported for this item');
+        }
+      }
+      const resolved = await loadCanonicalOrderItems(it.selections.map(s => ({ id: s.id, quantity: 1, options: s.temperature ? { temperature: s.temperature } : undefined })), effectiveLanguage, db);
+      components = resolved.canonicalItems;
+      inventoryItems.push(...resolved.normalizedItems.map(s => ({ ...s, quantity: s.quantity * it.quantity })));
+    } else {
+      if (it.selections?.length) throw createHttpError(400, 'Regular items cannot contain promotion selections');
+      inventoryItems.push(it);
+    }
     const price = Number(row?.price || 0);
     const nameEn = String(row?.nameEn || '');
     const nameAr = String(row?.nameAr || '');
     const temperature = it.options?.temperature;
     const temperatureEn = temperature === 'hot' ? 'Hot' : temperature === 'iced' ? 'Iced' : '';
     const temperatureAr = temperature === 'hot' ? 'ساخن' : temperature === 'iced' ? 'بارد' : '';
-    const displayNameEn = `${nameEn}${temperatureEn ? ` · ${temperatureEn}` : ''}`;
-    const displayNameAr = `${nameAr}${temperatureAr ? ` · ${temperatureAr}` : ''}`;
+    const displayNameEn = `${nameEn}${temperatureEn ? ` · ${temperatureEn}` : ''}${components.length ? ' — ' + components.map(c => c.nameEn).join(' + ') : ''}`;
+    const displayNameAr = `${nameAr}${temperatureAr ? ` · ${temperatureAr}` : ''}${components.length ? ' — ' + components.map(c => c.nameAr).join(' + ') : ''}`;
     const name =
       effectiveLanguage === 'ar' ? displayNameAr || displayNameEn : displayNameEn || displayNameAr;
     return {
       id: it.id,
+      ...(promotion ? { promotion, components } : {}),
       name,
       nameEn: displayNameEn,
       nameAr: displayNameAr,
@@ -458,12 +486,13 @@ async function loadCanonicalOrderItems(items, effectiveLanguage, db = pool) {
       categoryNameAr: String(row?.categoryNameAr || ''),
       ...(it.options ? { options: it.options } : {}),
     };
-  });
+  }));
 
+  const inventoryIds = [...new Set(inventoryItems.map(i => i.id))];
   return {
-    normalizedItems,
-    ids,
-    placeholders,
+    normalizedItems: inventoryItems,
+    ids: inventoryIds,
+    placeholders: inventoryIds.map(() => '?').join(','),
     canonicalItems,
   };
 }
@@ -629,7 +658,9 @@ async function buildOrderPricing({
       discountCodeError = message;
     };
 
-    if (!codeRow) {
+    if (canonicalItems.some(item => item.promotion)) {
+      failDiscountCode('Discount codes cannot be combined with promotion bundles');
+    } else if (!codeRow) {
       failDiscountCode('Discount code was not found');
     } else if (Number(codeRow.active) === 0) {
       failDiscountCode('Discount code is inactive');
@@ -1776,6 +1807,7 @@ app.get('/api/menu/items', async (c) => {
     const [categories] = await pool.execute('SELECT * FROM categories ORDER BY `order` ASC');
     const publicItems = items.map((item) => ({
       ...item,
+      promotion: parsePromotion(item.promotion),
       imageUrl: getPublicImageUrl(c, item.imageUrl),
     }));
     return c.json({ success: true, items: publicItems, categories });
@@ -1794,6 +1826,7 @@ app.get('/api/admin/menu', async (c) => {
     const [categories] = await pool.execute('SELECT * FROM categories ORDER BY `order` ASC');
     const publicItems = items.map((item) => ({
       ...item,
+      promotion: parsePromotion(item.promotion),
       imageUrl: getPublicImageUrl(c, item.imageUrl),
     }));
     return c.json({ success: true, items: publicItems, categories });
@@ -2873,6 +2906,12 @@ app.post('/api/admin/menu/item', async (c) => {
   const unauthorized = await requireAdmin(c);
   if (unauthorized) return unauthorized;
   const body = await c.req.json();
+  let promotion;
+  try {
+    const [products] = await pool.execute('SELECT id, promotion FROM items');
+    promotion = validatePromotion(body.promotion, products, body.id || c.req.param('id'));
+    if (!Number.isFinite(Number(body.price)) || Number(body.price) < 0) throw new Error('Invalid price');
+  } catch (error) { return c.json({ error: error.message }, 400); }
   let {
     id,
     nameEn,
@@ -2901,8 +2940,8 @@ app.post('/api/admin/menu/item', async (c) => {
     id = `${base}-${Math.random().toString(36).slice(2, 8)}`;
   }
   await pool.execute(
-    'INSERT INTO items (id, nameEn, nameAr, price, category, description, descriptionEn, descriptionAr, imageUrl, available) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, nameEn, nameAr, price, category, description, descriptionEn, descriptionAr, imageUrl || null, available ? 1 : 0]
+    'INSERT INTO items (id, nameEn, nameAr, price, category, description, descriptionEn, descriptionAr, imageUrl, available, promotion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, nameEn, nameAr, price, category, description, descriptionEn, descriptionAr, imageUrl || null, available ? 1 : 0, promotion ? JSON.stringify(promotion) : null]
   );
   return c.json({
     success: true,
@@ -2917,6 +2956,7 @@ app.post('/api/admin/menu/item', async (c) => {
       descriptionAr,
       imageUrl: imageUrl || null,
       available: !!available,
+      promotion,
     },
   });
 });
@@ -2926,6 +2966,13 @@ app.put('/api/admin/menu/item/:id', async (c) => {
   if (unauthorized) return unauthorized;
   const id = c.req.param('id');
   const body = await c.req.json();
+  let promotion;
+  try {
+    const [products] = await pool.execute('SELECT id, promotion FROM items');
+    const configured = Object.prototype.hasOwnProperty.call(body, 'promotion') ? body.promotion : parsePromotion(products.find(p => p.id === id)?.promotion);
+    promotion = validatePromotion(configured, products, id);
+    if (!Number.isFinite(Number(body.price)) || Number(body.price) < 0) throw new Error('Invalid price');
+  } catch (error) { return c.json({ error: error.message }, 400); }
   let {
     nameEn,
     nameAr,
@@ -2945,8 +2992,8 @@ app.put('/api/admin/menu/item/:id', async (c) => {
   const [existingRows] = await pool.execute('SELECT imageUrl FROM items WHERE id = ? LIMIT 1', [id]);
   const previousImageUrl = existingRows?.[0]?.imageUrl || null;
   await pool.execute(
-    'UPDATE items SET nameEn=?, nameAr=?, price=?, category=?, description=?, descriptionEn=?, descriptionAr=?, imageUrl=?, available=? WHERE id=?',
-    [nameEn, nameAr, price, category, description, descriptionEn, descriptionAr, imageUrl || null, available ? 1 : 0, id]
+    'UPDATE items SET nameEn=?, nameAr=?, price=?, category=?, description=?, descriptionEn=?, descriptionAr=?, imageUrl=?, available=?, promotion=? WHERE id=?',
+    [nameEn, nameAr, price, category, description, descriptionEn, descriptionAr, imageUrl || null, available ? 1 : 0, promotion ? JSON.stringify(promotion) : null, id]
   );
   if (getUploadedFileName(previousImageUrl) !== getUploadedFileName(imageUrl)) {
     await deleteUploadedImage(previousImageUrl).catch((error) => {
@@ -2966,6 +3013,7 @@ app.put('/api/admin/menu/item/:id', async (c) => {
       descriptionAr,
       imageUrl: imageUrl || null,
       available: !!available,
+      promotion,
     },
   });
 });

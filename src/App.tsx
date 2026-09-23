@@ -27,6 +27,7 @@ type Language = 'en' | 'ar';
 type DrinkTemperature = 'hot' | 'iced';
 
 interface CartItem {
+  selections?: import('./components/PromotionControls').PromoSelection[];
   id: string;
   cartKey?: string;
   nameEn: string;

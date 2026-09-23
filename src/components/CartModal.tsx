@@ -1,3 +1,4 @@
+import { PromotionPicker, PromotionSummary, promoKey, type PromoSelection, type Product } from './PromotionControls';
 import { useEffect, useState } from 'react';
 import { X, Plus, Minus, Banknote } from 'lucide-react';
 import { getApiRequestUrls } from '../utils/api';
@@ -5,6 +6,7 @@ import { getApiRequestUrls } from '../utils/api';
 type DrinkTemperature = 'hot' | 'iced';
 
 interface CartItem {
+  selections?: PromoSelection[];
   id: string;
   cartKey?: string;
   nameEn: string;
@@ -186,12 +188,25 @@ export function CartModal({
     onUpdateCart(updatedItems);
   };
 
+  const [editingPromo, setEditingPromo] = useState<{ line: CartItem; product: Product; products: Product[] } | null>(null);
+  const editPromo = async (line: CartItem) => {
+    try {
+      const { data, response } = await fetchJsonWithFallback(getApiRequestUrls('/menu/items'), {});
+      if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load menu');
+      const products = data.items.map((i: Product) => ({ ...i, price: Number(i.price), available: Boolean(Number(i.available)) }));
+      const product = products.find((i: Product) => i.id === line.id);
+      if (!product?.promotion || !product.available) throw new Error(language === 'ar' ? 'العرض غير متاح' : 'This promotion is no longer available');
+      setEditingPromo({ line, product, products });
+    } catch (err) { setError(err instanceof Error ? err.message : 'Unable to edit promotion'); }
+  };
+
   const itemsTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const rewardType = loyalty?.enabled && loyalty.stamps === loyaltyRewardCycle ? 'free' : null;
   const rewardActive = Boolean(redeemReward && rewardType);
   const coffeeCategoryTerms = ['coffee', 'espresso', 'v60'];
   const legacyCoffeeCategoryIds = ['hot', 'cold'];
   const eligibleCoffeeItems = items.filter((item) => {
+    if (item.selections?.length) return false;
     const category = String(item.category || '').trim().toLowerCase();
     if (
       !category ||
@@ -308,6 +323,7 @@ export function CartModal({
             items: items.map((item) => ({
               id: item.id,
               quantity: item.quantity,
+              selections: item.selections,
               options: item.temperature ? { temperature: item.temperature } : undefined,
             })),
             redeemReward,
@@ -370,7 +386,8 @@ export function CartModal({
           items: items.map((item) => ({
             id: item.id,
             quantity: item.quantity,
-            options: item.temperature ? { temperature: item.temperature } : undefined,
+            selections: item.selections,
+              options: item.temperature ? { temperature: item.temperature } : undefined,
           })),
           paymentMethod,
           language,
@@ -412,6 +429,7 @@ export function CartModal({
                 item.temperature ? ` · ${item.temperature === 'hot' ? 'ساخن' : 'بارد'}` : ''
               }`,
               price: item.price,
+              selections: item.selections,
               options: item.temperature ? { temperature: item.temperature } : undefined,
             })),
             total: pricing.total,
@@ -470,6 +488,14 @@ export function CartModal({
       className="fixed inset-0 bg-[var(--crisp-white)] z-50 overflow-y-auto"
       dir={isRTL ? 'rtl' : 'ltr'}
     >
+      {editingPromo && <PromotionPicker item={editingPromo.product} items={editingPromo.products} language={language} initialSelections={editingPromo.line.selections} onClose={() => setEditingPromo(null)} onAdd={selections => {
+        const oldKey = getCartKey(editingPromo.line);
+        const updated = { ...editingPromo.line, price: editingPromo.product.price, selections, cartKey: promoKey(editingPromo.product.id, selections) };
+        const remaining = items.filter(i => getCartKey(i) !== oldKey);
+        const match = remaining.find(i => getCartKey(i) === updated.cartKey);
+        onUpdateCart(match ? remaining.map(i => i === match ? { ...i, quantity: i.quantity + updated.quantity } : i) : [...remaining, updated]);
+        setEditingPromo(null);
+      }} />}
       {showConfirm && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-4">
           <div className="bg-[var(--crisp-white)] border-2 border-[var(--matte-black)] max-w-sm w-full p-5">
@@ -527,6 +553,8 @@ export function CartModal({
                       <h3 className="mb-1 text-[var(--matte-black)]">
                         {language === 'en' ? item.nameEn : item.nameAr}
                       </h3>
+                      <PromotionSummary selections={item.selections} language={language} />
+                      {item.selections && <button className="text-xs underline" onClick={() => editPromo(item)}>{language === 'ar' ? 'تعديل الاختيارات' : 'Edit choices'}</button>}
                       {temperatureLabel && (
                         <div className="text-[11px] text-[var(--matte-black)] opacity-60 mb-1">
                           {temperatureLabel}

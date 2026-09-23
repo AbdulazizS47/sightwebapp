@@ -80,7 +80,7 @@ export function selectFreeCoffeeReward(items, maxRewardValue = Number.POSITIVE_I
     : Number.POSITIVE_INFINITY;
 
   return (Array.isArray(items) ? items : []).reduce((selected, item) => {
-    if (!isCoffeeRewardEligible(item)) return selected;
+    if (item.promotion || !isCoffeeRewardEligible(item)) return selected;
     const itemUnitPrice = Number(item?.price || 0);
     if (!Number.isFinite(itemUnitPrice) || itemUnitPrice <= 0) return selected;
     const rewardValue = Math.min(itemUnitPrice, safeMaxRewardValue);

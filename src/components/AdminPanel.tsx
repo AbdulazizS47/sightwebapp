@@ -1,3 +1,4 @@
+import { PromotionFields, type Promotion } from './PromotionControls';
 import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, RefreshCw, Plus, Edit2, X, Trash2 } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
@@ -42,6 +43,7 @@ interface Category {
 }
 
 interface MenuItem {
+  promotion?: Promotion | null;
   id: string;
   nameEn: string;
   nameAr: string;
@@ -601,6 +603,7 @@ export function AdminPanel({
       });
 
       const data = await response.json();
+      if (!response.ok) { alert(data.error || 'Failed to create item'); return; }
 
       if (data.success) {
         setMenuItems((prev) => [
@@ -1392,7 +1395,7 @@ export function AdminPanel({
                       >
                         {editingItem === item.id ? (
                           <div className="space-y-4">
-                            <h4 className="text-md text-[var(--matte-black)] mb-4">Edit Item</h4>
+                            <h4 className="text-md text-[var(--matte-black)] mb-4">Edit Item</h4><PromotionFields value={item.promotion} ownId={item.id} onChange={promotion => setMenuItems(prev => prev.map(i => i.id === item.id ? { ...i, promotion } : i))} items={menuItems} language={language} />
 
                             {/* Image Preview and Upload */}
                             <div className="flex flex-col gap-2">
@@ -1691,7 +1694,7 @@ export function AdminPanel({
                   )}
                   {!limitedControl && showNewItem === category.id && (
                     <div className="border-2 border-[var(--matte-black)] p-4 bg-[var(--crisp-white)]">
-                      <h4 className="text-md text-[var(--matte-black)] mb-2">{text.addItem}</h4>
+                      <h4 className="text-md text-[var(--matte-black)] mb-2">{text.addItem}</h4><PromotionFields value={newItem.promotion} onChange={promotion => setNewItem({ ...newItem, promotion })} items={menuItems} language={language} />
                       <div className="space-y-2">
                         <div className="flex items-center gap-4">
                           <label className="text-sm text-[var(--matte-black)] opacity-70">

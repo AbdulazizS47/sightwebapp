@@ -1,3 +1,4 @@
+import { PromotionPicker, PromotionSummary, promoKey, type Promotion, type PromoSelection } from './PromotionControls';
 import { useEffect, useMemo, useState } from 'react';
 import { LogOut, Minus, Plus, ShoppingBag } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
@@ -5,6 +6,7 @@ import { getApiRequestUrls } from '../utils/api';
 import { resolveImageUrl } from '../utils/media';
 
 interface MenuItem {
+  promotion?: Promotion | null;
   id: string;
   nameEn: string;
   nameAr: string;
@@ -24,6 +26,7 @@ interface Category {
 type DrinkTemperature = 'hot' | 'iced';
 
 interface CartLine {
+  selections?: PromoSelection[];
   id: string;
   cartKey: string;
   nameEn: string;
@@ -54,6 +57,8 @@ interface CashierPageProps {
 
 export function CashierPage({ sessionToken, cashierUser, language, onLogout }: CashierPageProps) {
   const [categories, setCategories] = useState<Category[]>([]);
+  const [editingPromoKey, setEditingPromoKey] = useState<string | null>(null);
+  const [promoItem, setPromoItem] = useState<MenuItem | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [activeCategory, setActiveCategory] = useState('');
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -164,6 +169,7 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
           : [];
         const nextItems: MenuItem[] = Array.isArray(data.items)
           ? data.items.map((i: any) => ({
+              promotion: i.promotion,
               id: String(i?.id || ''),
               nameEn: String(i?.nameEn || ''),
               nameAr: String(i?.nameAr || ''),
@@ -208,7 +214,8 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
               items: cart.map((line) => ({
                 id: line.id,
                 quantity: line.quantity,
-                options: line.temperature ? { temperature: line.temperature } : undefined,
+                selections: line.selections,
+              options: line.temperature ? { temperature: line.temperature } : undefined,
               })),
               language,
             }),
@@ -237,7 +244,7 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
     };
   }, [cart, itemsTotal, language]);
 
-  const hasTemperatureChoice = (item: MenuItem) => item.category.toLowerCase() === 'v60';
+  const hasTemperatureChoice = (item: MenuItem) => !item.promotion && item.category.toLowerCase() === 'v60';
 
   const getSelectedTemperature = (item: MenuItem): DrinkTemperature =>
     selectedTemperatures[item.id] || 'iced';
@@ -251,6 +258,7 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
   };
 
   const addToCart = (item: MenuItem) => {
+    if (item.promotion) { setPromoItem(item); return; }
     const temperature = hasTemperatureChoice(item) ? getSelectedTemperature(item) : undefined;
     const cartKey = getCartKey(item.id, temperature);
     setCart((prev) => {
@@ -317,7 +325,8 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
               items: cart.map((line) => ({
                 id: line.id,
                 quantity: line.quantity,
-                options: line.temperature ? { temperature: line.temperature } : undefined,
+                selections: line.selections,
+              options: line.temperature ? { temperature: line.temperature } : undefined,
               })),
               paymentMethod,
               customerPhoneNumber: customerPhone.trim() || undefined,
@@ -349,6 +358,12 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
 
   return (
     <div className="min-h-screen bg-[var(--crisp-white)]" dir={isRTL ? 'rtl' : 'ltr'}>
+      {promoItem && <PromotionPicker item={promoItem} items={menuItems} language={language} initialSelections={cart.find(i => i.cartKey === editingPromoKey)?.selections} onClose={() => { setPromoItem(null); setEditingPromoKey(null); }} onAdd={selections => {
+        const cartKey = promoKey(promoItem.id, selections);
+        setCart(prev => { const quantity = prev.find(i => i.cartKey === editingPromoKey)?.quantity || 1; const remaining = prev.filter(i => i.cartKey !== editingPromoKey); const existing = remaining.find(i => i.cartKey === cartKey); return existing ? remaining.map(i => i.cartKey === cartKey ? { ...i, quantity: i.quantity + quantity } : i) : [...remaining, { ...promoItem, selections, cartKey, quantity }]; });
+        setEditingPromoKey(null);
+        setPromoItem(null);
+      }} />}
       <div className="sticky top-0 bg-[var(--crisp-white)] border-b-2 border-[var(--matte-black)] z-10 p-4 flex items-center justify-between gap-3">
         <div>
           <h1 className="text-lg text-[var(--matte-black)]">{text.title}</h1>
@@ -511,6 +526,8 @@ export function CashierPage({ sessionToken, cashierUser, language, onLogout }: C
                         {language === 'en' ? line.nameEn : line.nameAr}
                         {line.temperature && ` · ${getTemperatureLabel(line.temperature)}`}
                       </div>
+                      <PromotionSummary selections={line.selections} language={language} />
+                      {line.selections && <button className="text-xs underline" onClick={() => { const product = menuItems.find(i => i.id === line.id); if (product?.promotion) { setEditingPromoKey(line.cartKey); setPromoItem(product); } }}>{language === 'ar' ? 'تعديل الاختيارات' : 'Edit choices'}</button>}
                       <div className="text-xs opacity-70">
                         {line.price} {text.sar}
                       </div>

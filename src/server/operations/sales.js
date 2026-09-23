@@ -27,6 +27,7 @@ function safeQuantity(value) {
 export function aggregateSalesRows(rows, { fromDate, toDate, days }) {
   const orders = Array.isArray(rows) ? rows : [];
   const productTotals = new Map();
+  const promotionSelections = new Map();
   const payments = new Map();
   const daily = new Map();
   const customers = new Set();
@@ -74,6 +75,12 @@ export function aggregateSalesRows(rows, { fromDate, toDate, days }) {
     }
 
     for (const item of parseItems(order.items)) {
+      for (const component of item.components || []) {
+        const selected = promotionSelections.get(component.id) || { id: component.id, name: component.nameEn || component.name, quantity: 0 };
+        selected.quantity += safeQuantity(item.quantity) * safeQuantity(component.quantity);
+        promotionSelections.set(component.id, selected);
+      }
+
       const id = String(item?.id || item?.nameEn || item?.name || item?.nameAr || 'item');
       const name = String(
         item?.nameEn || item?.name || item?.nameAr || item?.id || 'Item'
@@ -97,6 +104,7 @@ export function aggregateSalesRows(rows, { fromDate, toDate, days }) {
   const roundedRevenue = roundMoney(revenue);
   return {
     source: 'orders',
+    promotionSelections: [...promotionSelections.values()],
     period: {
       fromDate,
       toDate,

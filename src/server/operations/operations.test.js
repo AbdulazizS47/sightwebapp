@@ -125,3 +125,13 @@ describe('inventory risk derivation', () => {
     expect(risk.estimateBasis).toContain('No recorded');
   });
 });
+
+
+describe('promotion reporting', () => {
+  it('counts selected drinks separately without adding their regular prices to revenue', () => {
+    const result = aggregateSalesRows([{total:19.2,dateKey:'20260923',items:[{id:'promo',nameEn:'Two drinks',price:9.6,quantity:2,components:[{id:'latte',nameEn:'Latte',price:12,quantity:1},{id:'latte',nameEn:'Latte',price:12,quantity:1}]}]}], {fromDate:'20260923',toDate:'20260923',days:1});
+    expect(result.metrics.revenue).toBe(19.2);
+    expect(result.products).toEqual([expect.objectContaining({id:'promo',quantity:2,revenue:19.2})]);
+    expect(result.promotionSelections).toEqual([{id:'latte',name:'Latte',quantity:4}]);
+  });
+});

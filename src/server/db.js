@@ -370,6 +370,7 @@ export async function initSchema() {
   };
 
   await ensureColumn('ALTER TABLE sessions ADD COLUMN expiresAt BIGINT NULL');
+  await ensureColumn('ALTER TABLE items ADD COLUMN promotion JSON NULL');
   await ensureColumn('ALTER TABLE items ADD COLUMN descriptionEn TEXT NULL');
   await ensureColumn('ALTER TABLE items ADD COLUMN descriptionAr TEXT NULL');
   await ensureColumn('ALTER TABLE inventory_items ADD COLUMN lowStockAlertSentAt BIGINT NULL');

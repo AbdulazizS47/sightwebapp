@@ -178,4 +178,46 @@ suite('HTTP order lifecycle and schema upgrade', () => {
     expect(Number((await rows("SELECT stockQty FROM inventory_items WHERE id='beans-test'"))[0].stockQty)).toBe(500);
   });
 
+  it('prices promotion selections canonically and deducts/restores the chosen drinks', async () => {
+    const promo = { count: 2, itemIds: ['qamar-test'], allowDuplicates: true };
+    const added = await request('/admin/menu/item', {method:'POST', body:{id:'promo-test',nameEn:'Two drinks',nameAr:'مشروبان',price:9.6,category:'v60',available:true,promotion:promo}});
+    expect(added.status).toBe(200);
+    const items = [{id:'promo-test',quantity:2,price:0.01,selections:[{id:'qamar-test',temperature:'hot'},{id:'qamar-test',temperature:'iced'}]}];
+    const preview = await request('/orders/price-preview', {method:'POST',customer:true,body:{items,language:'en'}});
+    expect(preview.status).toBe(200);
+    expect(preview.body.pricing.total).toBe(19.2);
+    const before = Number((await rows("SELECT stockQty FROM inventory_items WHERE id='beans-test'"))[0].stockQty);
+    const consume = Number((await rows("SELECT consumeQty FROM inventory_usage_rules WHERE menuItemId='qamar-test'"))[0].consumeQty);
+    const created = await request('/orders/create', {method:'POST',customer:true,body:{items,paymentMethod:'cash',language:'en'}});
+    expect(created.status).toBe(200);
+    const order = (await rows('SELECT items,total FROM orders WHERE id=?',[created.body.orderId]))[0];
+    const stored = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
+    expect(stored[0].components).toHaveLength(2);
+    expect(stored[0].nameEn).toContain('Hot');
+    expect(stored[0].nameEn).toContain('Iced');
+    expect(Number(order.total)).toBe(19.2);
+    expect(Number((await rows("SELECT stockQty FROM inventory_items WHERE id='beans-test'"))[0].stockQty)).toBe(before - consume * 4);
+    expect((await remove(created.body.orderId)).status).toBe(200);
+    expect(Number((await rows("SELECT stockQty FROM inventory_items WHERE id='beans-test'"))[0].stockQty)).toBe(before);
+    for (const selections of [[{id:'qamar-test'}], [{id:'missing'},{id:'qamar-test'}]]) {
+      expect((await request('/orders/price-preview',{method:'POST',body:{items:[{id:'promo-test',quantity:1,selections}]}})).status).toBe(400);
+    }
+    const noTemperature = [{id:'promo-test',quantity:1,selections:[{id:'qamar-test'},{id:'qamar-test'}]}];
+    expect((await request('/orders/price-preview',{method:'POST',body:{items:noTemperature}})).status).toBe(400);
+    const cashierOrder = await request('/cashier/orders/create',{method:'POST',cashier:true,body:{items,paymentMethod:'cash',language:'ar'}});
+    expect(cashierOrder.status).toBe(200);
+    expect(cashierOrder.body.order.total).toBe(19.2);
+    expect(cashierOrder.body.order.items[0].nameAr).toContain('ساخن');
+    await remove(cashierOrder.body.orderId);
+    expect(Number((await rows("SELECT stockQty FROM inventory_items WHERE id='beans-test'"))[0].stockQty)).toBe(before);
+    const withCoupon = await request('/orders/create',{method:'POST',customer:true,body:{items,discountCode:'TEST',paymentMethod:'cash'}});
+    expect(withCoupon.status).toBe(400);
+    await rows("UPDATE items SET promotion=? WHERE id='promo-test'",[JSON.stringify({...promo, endsAt:Date.now()-1000})]);
+    expect((await request('/orders/price-preview',{method:'POST',body:{items}})).status).toBe(400);
+    await rows("UPDATE items SET promotion=? WHERE id='promo-test'",[JSON.stringify(promo)]);
+    await rows("UPDATE items SET available=0 WHERE id='qamar-test'");
+    expect((await request('/orders/price-preview',{method:'POST',body:{items}})).status).toBe(400);
+    await rows("UPDATE items SET available=1 WHERE id='qamar-test'");
+  });
+
 });
