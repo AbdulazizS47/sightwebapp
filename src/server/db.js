@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import mysql from 'mysql2/promise';
+import { CFO_OFFICE_INDEXES, CFO_OFFICE_TABLES } from './cfo-office/schema.js';
 
 const parseMysqlUrl = (value) => {
   if (!value) return null;
@@ -353,6 +354,10 @@ export async function initSchema() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
+  for (const sql of CFO_OFFICE_TABLES) {
+    await pool.execute(sql);
+  }
+
   // Best-effort indexes (ignore if already present)
   const ensureIndex = async (sql) => {
     try {
@@ -427,6 +432,10 @@ export async function initSchema() {
   await ensureIndex(
     'CREATE INDEX idx_whatsapp_broadcasts_created ON whatsapp_broadcasts(createdAt)'
   );
+
+  for (const sql of CFO_OFFICE_INDEXES) {
+    await ensureIndex(sql);
+  }
 
   if (DEV_SEED_DISCOUNT_CODES) {
     const now = Date.now();
