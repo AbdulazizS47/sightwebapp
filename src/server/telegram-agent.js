@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { pool } from './db.js';
 import {
   callTelegramBotApi,
+  downloadTelegramFile,
   getTelegramBotConfig,
   sendTelegramLongMessage,
   sendTelegramMessage,
@@ -11,6 +12,8 @@ import {
   getOperationalAgentConfig,
 } from './agent/operational-manager.js';
 import { clearAgentConversation } from './agent/conversations.js';
+import { getCfoOfficeConfig, publicCfoOfficeStatus } from './cfo-office/config.js';
+import { createCfoOffice } from './cfo-office/telegram.js';
 import {
   buildSalesSummaryMessage,
   loadSalesSummary,
@@ -36,6 +39,20 @@ const configuredAgentChatIds = (
   .map((value) => value.trim())
   .filter(Boolean);
 const operationalManagers = new Map();
+const cfoOfficeConfig = getCfoOfficeConfig();
+let cfoOffice = null;
+
+function getCfoOffice() {
+  if (!cfoOffice) {
+    cfoOffice = createCfoOffice({
+      db: pool,
+      telegram: { call: callTelegramBotApi, download: downloadTelegramFile },
+      config: cfoOfficeConfig,
+      timeZone: fallbackTimeZone,
+    });
+  }
+  return cfoOffice;
+}
 
 function getOperationalManager(timeZone) {
   const key = String(timeZone || fallbackTimeZone);
@@ -164,6 +181,7 @@ export function getTelegramAgentStatus() {
     publicBaseUrlValid,
     dailyReportTime,
     operationalAgent,
+    cfoOffice: publicCfoOfficeStatus(cfoOfficeConfig),
   };
 }
 
@@ -171,6 +189,13 @@ export async function handleTelegramUpdate(update, receivedSecret) {
   if (!enabled) return { status: 503, body: { error: 'Telegram agent is disabled' } };
   if (!webhookSecret || !safeEqual(receivedSecret, webhookSecret)) {
     return { status: 401, body: { error: 'Unauthorized' } };
+  }
+
+  const cfo = getCfoOffice().handleUpdate(update);
+  if (cfo.handled) {
+    // Grok and file downloads can be slow; answer Telegram now so it does not resend the update.
+    cfo.work?.catch((error) => console.error('CFO Office update failed', error));
+    return { status: 200, body: { ok: true } };
   }
 
   const message = update?.message;
@@ -271,7 +296,7 @@ async function configureWebhook() {
   await callTelegramBotApi('setWebhook', {
     url: webhookUrl,
     secret_token: webhookSecret,
-    allowed_updates: ['message'],
+    allowed_updates: ['message', 'callback_query'],
   });
   await callTelegramBotApi('setMyCommands', {
     commands: [
@@ -298,10 +323,25 @@ export function startTelegramAgent() {
     .then(() => console.log('[startup] Telegram sales agent webhook configured.'))
     .catch((error) => console.error('Failed to configure Telegram sales agent webhook', error));
 
+  if (cfoOfficeConfig.enabled) {
+    if (!cfoOfficeConfig.ready) {
+      console.warn('[startup] CFO Office is enabled but CFO_OFFICE_CHAT_ID or XAI_API_KEY is missing.');
+    }
+    getCfoOffice()
+      .init()
+      .then(() => console.log('[startup] CFO Office questions ready.'))
+      .catch((error) => console.error('Failed to prepare CFO Office questions', error));
+  }
+
   const check = () => {
     deliverDailyReportIfDue().catch((error) =>
       console.error('Failed to deliver scheduled Telegram sales report', error)
     );
+    if (cfoOfficeConfig.ready) {
+      getCfoOffice()
+        .runSchedule()
+        .catch((error) => console.error('Failed to post scheduled CFO Office questions', error));
+    }
   };
   check();
   const timer = setInterval(check, 60 * 1000);

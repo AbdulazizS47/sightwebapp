@@ -170,6 +170,17 @@ export async function callTelegramBotApi(method, payload) {
   }
 }
 
+export async function downloadTelegramFile(fileId, maxBytes = 10 * 1024 * 1024) {
+  const file = await callTelegramBotApi('getFile', { file_id: fileId });
+  if (!file?.file_path) throw new Error('Telegram getFile returned no file path');
+  if (Number(file.file_size || 0) > maxBytes) throw new Error('Telegram file is too large');
+  const response = await fetch(`${telegramApiBase}/file/bot${telegramBotToken}/${file.file_path}`);
+  if (!response.ok) throw new Error(`Telegram file download failed: HTTP ${response.status}`);
+  const data = Buffer.from(await response.arrayBuffer());
+  if (data.length > maxBytes) throw new Error('Telegram file is too large');
+  return { data, filePath: String(file.file_path) };
+}
+
 export async function sendTelegramMessage(chatId, text) {
   return callTelegramBotApi('sendMessage', {
     chat_id: chatId,

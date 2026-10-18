@@ -74,6 +74,10 @@ The AI layer is read-only. It can query typed sales, open-order, inventory, inve
 movement, and data-quality tools. It cannot execute arbitrary SQL or change orders, inventory,
 prices, discounts, settings, or customer communications.
 
+Optional CFO Office (Grok agent in a Telegram group):
+- Follow `docs/CFO_OFFICE.md`. It needs the Telegram agent settings above plus `CFO_OFFICE_ENABLED`,
+  `CFO_OFFICE_CHAT_ID`, `CFO_OFFICE_APPROVER_USER_IDS` and `XAI_API_KEY` on the API service.
+
 For Android OTP keyboard suggestions/WebOTP, the Authentica SMS template should include the
 customer-facing site host on the final line, for example `@sightcoffeespace.com #{{otp}}`.
 
