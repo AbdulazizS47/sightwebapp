@@ -14,6 +14,8 @@ import {
 import { clearAgentConversation } from './agent/conversations.js';
 import { getCfoOfficeConfig, publicCfoOfficeStatus } from './cfo-office/config.js';
 import { createCfoOffice } from './cfo-office/telegram.js';
+import { getCmoOfficeConfig, publicCmoOfficeStatus } from './cmo-office/config.js';
+import { createCmoOffice } from './cmo-office/telegram.js';
 import {
   buildSalesSummaryMessage,
   loadSalesSummary,
@@ -52,6 +54,21 @@ function getCfoOffice() {
     });
   }
   return cfoOffice;
+}
+
+const cmoOfficeConfig = getCmoOfficeConfig();
+let cmoOffice = null;
+
+function getCmoOffice() {
+  if (!cmoOffice) {
+    cmoOffice = createCmoOffice({
+      db: pool,
+      telegram: { call: callTelegramBotApi, download: downloadTelegramFile },
+      config: cmoOfficeConfig,
+      timeZone: fallbackTimeZone,
+    });
+  }
+  return cmoOffice;
 }
 
 function getOperationalManager(timeZone) {
@@ -182,6 +199,7 @@ export function getTelegramAgentStatus() {
     dailyReportTime,
     operationalAgent,
     cfoOffice: publicCfoOfficeStatus(cfoOfficeConfig),
+    cmoOffice: publicCmoOfficeStatus(cmoOfficeConfig),
   };
 }
 
@@ -195,6 +213,13 @@ export async function handleTelegramUpdate(update, receivedSecret) {
   if (cfo.handled) {
     // Grok and file downloads can be slow; answer Telegram now so it does not resend the update.
     cfo.work?.catch((error) => console.error('CFO Office update failed', error));
+    return { status: 200, body: { ok: true } };
+  }
+
+  const cmo = getCmoOffice().handleUpdate(update);
+  if (cmo.handled) {
+    // Claude and file downloads can be slow; answer Telegram now so it does not resend the update.
+    cmo.work?.catch((error) => console.error('CMO Office update failed', error));
     return { status: 200, body: { ok: true } };
   }
 
@@ -333,6 +358,16 @@ export function startTelegramAgent() {
       .catch((error) => console.error('Failed to prepare CFO Office questions', error));
   }
 
+  if (cmoOfficeConfig.enabled) {
+    if (!cmoOfficeConfig.ready) {
+      console.warn('[startup] CMO Office is enabled but CMO_OFFICE_CHAT_ID or ANTHROPIC_API_KEY is missing.');
+    }
+    getCmoOffice()
+      .init()
+      .then(() => console.log('[startup] CMO Office brand notes ready.'))
+      .catch((error) => console.error('Failed to prepare CMO Office brand notes', error));
+  }
+
   const check = () => {
     deliverDailyReportIfDue().catch((error) =>
       console.error('Failed to deliver scheduled Telegram sales report', error)
@@ -341,6 +376,11 @@ export function startTelegramAgent() {
       getCfoOffice()
         .runSchedule()
         .catch((error) => console.error('Failed to post scheduled CFO Office questions', error));
+    }
+    if (cmoOfficeConfig.ready) {
+      getCmoOffice()
+        .runSchedule()
+        .catch((error) => console.error('Failed to run scheduled CMO Office drafts', error));
     }
   };
   check();
