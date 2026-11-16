@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import mysql from 'mysql2/promise';
 import { CFO_OFFICE_INDEXES, CFO_OFFICE_TABLES } from './cfo-office/schema.js';
+import { CMO_OFFICE_INDEXES, CMO_OFFICE_TABLES } from './cmo-office/schema.js';
 
 const parseMysqlUrl = (value) => {
   if (!value) return null;
@@ -358,6 +359,10 @@ export async function initSchema() {
     await pool.execute(sql);
   }
 
+  for (const sql of CMO_OFFICE_TABLES) {
+    await pool.execute(sql);
+  }
+
   // Best-effort indexes (ignore if already present)
   const ensureIndex = async (sql) => {
     try {
@@ -434,6 +439,10 @@ export async function initSchema() {
   );
 
   for (const sql of CFO_OFFICE_INDEXES) {
+    await ensureIndex(sql);
+  }
+
+  for (const sql of CMO_OFFICE_INDEXES) {
     await ensureIndex(sql);
   }
 
