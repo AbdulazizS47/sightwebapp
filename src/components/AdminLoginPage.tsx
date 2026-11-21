@@ -25,7 +25,7 @@ export function AdminLoginPage({ onBack, onSuccess, language }: AdminLoginPagePr
       phonePlaceholder: '+966 5X XXX XXXX',
       sendOtp: 'Send Code',
       otpLabel: 'Verification Code',
-      otpPlaceholder: 'Enter 6-digit code',
+      otpPlaceholder: 'Enter 4-digit code',
       verify: 'Verify',
       note: 'Sign in with your registered admin or cashier phone number.',
     },
@@ -36,7 +36,7 @@ export function AdminLoginPage({ onBack, onSuccess, language }: AdminLoginPagePr
       phonePlaceholder: '+966 5X XXX XXXX',
       sendOtp: 'إرسال الرمز',
       otpLabel: 'رمز التحقق',
-      otpPlaceholder: 'أدخل رمز من 6 أرقام',
+      otpPlaceholder: 'أدخل رمز من 4 أرقام',
       verify: 'تحقق',
       note: 'سجّل الدخول برقم هاتف المدير أو الكاشير المسجل.',
     },
@@ -70,7 +70,7 @@ export function AdminLoginPage({ onBack, onSuccess, language }: AdminLoginPagePr
   };
 
   const handleVerifyOtp = async () => {
-    if (!otp || otp.length !== 6) {
+    if (otp.length !== 4) {
       setError(language === 'ar' ? 'أدخل رمزاً صحيحاً' : 'Enter a valid code');
       return;
     }
@@ -98,7 +98,7 @@ export function AdminLoginPage({ onBack, onSuccess, language }: AdminLoginPagePr
     otpInputRef.current?.focus();
     const controller = new AbortController();
     readOtpFromSms(controller.signal).then((code) => {
-      if (code) setOtp(code);
+      if (code && /^\d{4}$/.test(code)) setOtp(code);
     });
     return () => controller.abort();
   }, [step]);
@@ -148,16 +148,16 @@ export function AdminLoginPage({ onBack, onSuccess, language }: AdminLoginPagePr
                 ref={otpInputRef}
                 type="text"
                 value={otp}
-                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 4))}
                 onPaste={(e) => {
-                  const digits = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+                  const digits = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 4);
                   if (digits) {
                     e.preventDefault();
                     setOtp(digits);
                   }
                 }}
                 placeholder={text.otpPlaceholder}
-                maxLength={6}
+                maxLength={4}
                 dir="ltr"
                 inputMode="numeric"
                 autoComplete="one-time-code"

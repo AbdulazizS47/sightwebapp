@@ -1493,7 +1493,7 @@ app.post('/api/auth/send-otp', async (c) => {
       }
     }
 
-    const code = OTP_DEV_MODE ? '123456' : String(Math.floor(100000 + Math.random() * 900000));
+    const code = OTP_DEV_MODE ? '1234' : String(crypto.randomInt(10_000)).padStart(4, '0');
     const codeHash = hashOtp(code);
     const expiresAt = now + OTP_TTL_MS;
 
@@ -1534,6 +1534,11 @@ app.post('/api/auth/verify-otp', async (c) => {
     const { phoneNumber, otp } = await c.req.json();
     if (!phoneNumber || !otp) return c.json({ error: 'Phone and OTP required' }, 400);
 
+    const incoming = String(otp).trim();
+    if (!/^\d{4}$/.test(incoming)) {
+      return c.json({ error: 'Enter a 4-digit code' }, 400);
+    }
+
     const normalizedPhone = normalizeKsaPhone(phoneNumber);
     if (!normalizedPhone) return c.json({ error: 'Invalid phone number' }, 400);
 
@@ -1549,10 +1554,6 @@ app.post('/api/auth/verify-otp', async (c) => {
       return c.json({ error: 'Too many attempts. Request a new code.' }, 429);
     }
 
-    const incoming = String(otp).trim();
-    if (OTP_DEV_MODE && incoming !== '123456') {
-      return c.json({ error: 'Invalid code' }, 401);
-    }
     const matches = hashOtp(incoming) === String(rec.codeHash);
     if (!matches) {
       await pool.execute('UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?', [rec.id]);

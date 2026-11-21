@@ -10,7 +10,7 @@
 
 ### OTP verification failed
 
-- Make sure the code is six digits.
+- Make sure the code is four digits.
 - Request a new code if the current one expired.
 - Wait before retrying if rate limiting is triggered.
 

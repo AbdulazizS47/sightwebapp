@@ -29,7 +29,7 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
       phonePlaceholder: '5XXXXXXXX',
       sendOtp: 'Send Code',
       otpLabel: 'Verification Code',
-      otpPlaceholder: 'Enter 6-digit code',
+      otpPlaceholder: 'Enter 4-digit code',
       verify: 'Verify',
       nameLabel: 'Your Name',
       namePlaceholder: 'Enter your name',
@@ -43,7 +43,7 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
       phonePlaceholder: '5XXXXXXXX',
       sendOtp: 'إرسال الرمز',
       otpLabel: 'رمز التحقق',
-      otpPlaceholder: 'أدخل رمز من 6 أرقام',
+      otpPlaceholder: 'أدخل رمز من 4 أرقام',
       verify: 'تحقق',
       nameLabel: 'اسمك',
       namePlaceholder: 'أدخل اسمك',
@@ -103,8 +103,8 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
   };
 
   const handleVerifyOtp = async () => {
-    if (!otp) {
-      setError('Verification code is required');
+    if (otp.length !== 4) {
+      setError(text.otpPlaceholder);
       return;
     }
 
@@ -201,7 +201,7 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
     otpInputRef.current?.focus();
     const controller = new AbortController();
     readOtpFromSms(controller.signal).then((code) => {
-      if (code) setOtp(code);
+      if (code && /^\d{4}$/.test(code)) setOtp(code);
     });
     return () => controller.abort();
   }, [step]);
@@ -270,18 +270,18 @@ export function AuthModal({ onClose, onSuccess, language }: AuthModalProps) {
               type="text"
               value={otp}
               onChange={(e) => {
-                const digits = e.target.value.replace(/\D/g, '').slice(0, 6);
+                const digits = e.target.value.replace(/\D/g, '').slice(0, 4);
                 setOtp(digits);
               }}
               onPaste={(e) => {
-                const digits = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+                const digits = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 4);
                 if (digits) {
                   e.preventDefault();
                   setOtp(digits);
                 }
               }}
               placeholder={text.otpPlaceholder}
-              maxLength={6}
+              maxLength={4}
               dir="ltr"
               inputMode="numeric"
               autoComplete="one-time-code"
