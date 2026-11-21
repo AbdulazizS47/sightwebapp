@@ -1,11 +1,6 @@
 import { PromotionFields, PromotionPicker, promoKey, type Promotion, type PromoSelection } from './PromotionControls';
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { Plus, ShoppingBag, ArrowLeft, Edit2, Save, Trash2, Coffee, Slash } from 'lucide-react';
-import categoryFallback from 'figma:asset/6a698afc3834913c1c2ac422fa5bd04b815dc28c.png';
-import coffeeIcon from '../assets/COFFEE.png';
-import v60Icon from '../assets/V60.png';
-import notCoffeeIcon from '../assets/NOT COFFEE.ong.png';
-import sweetsIcon from '../assets/SWEET.png';
+import { ArrowLeft, CakeSlice, Coffee, CupSoda, Edit2, Funnel, LayoutGrid, Plus, Save, Trash2, type LucideIcon } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { getImageUploadError, prepareImageUpload } from '../utils/imageUpload';
 import { apiBaseUrl } from '../utils/api';
@@ -29,7 +24,6 @@ interface Category {
   nameEn: string;
   nameAr: string;
   order: number;
-  iconUrl?: string;
 }
 
 type DrinkTemperature = 'hot' | 'iced';
@@ -64,6 +58,18 @@ interface MenuPageProps {
   sessionToken: string | null;
   adminMode?: 'edit' | 'order';
 }
+
+const categoryIcons = new Map<string, LucideIcon>([
+  ['espresso', Coffee],
+  ['coffee', Coffee],
+  ['test-cat-3gl702', Coffee],
+  ['hot', Coffee],
+  ['v60', Funnel],
+  ['not-coffee', CupSoda],
+  ['cold', CupSoda],
+  ['pastries', CakeSlice],
+  ['sweets', CakeSlice],
+]);
 
 const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp';
 
@@ -152,7 +158,6 @@ export function MenuPage({
       iced: 'Iced',
       temperature: 'Temperature',
       checkout: 'Checkout',
-      emptyCart: 'Cart is empty',
       menuUnavailable: 'Unable to load the menu right now',
       menuEmpty: 'No menu items available',
       retry: 'Retry',
@@ -166,7 +171,6 @@ export function MenuPage({
       iced: 'بارد',
       temperature: 'درجة المشروب',
       checkout: 'تنفيذ الطلب',
-      emptyCart: 'السلة فارغة',
       menuUnavailable: 'تعذر تحميل القائمة الآن',
       menuEmpty: 'لا توجد عناصر في القائمة',
       retry: 'إعادة المحاولة',
@@ -325,7 +329,6 @@ export function MenuPage({
               nameEn: String(category?.nameEn || ''),
               nameAr: String(category?.nameAr || ''),
               order: Number(category?.order || 0),
-              iconUrl: category?.iconUrl || undefined,
             }))
             .filter((category: Category) => category.id)
             .sort((a: Category, b: Category) => a.order - b.order)
@@ -762,8 +765,6 @@ export function MenuPage({
     (sum, item) => sum + (Number(item.price) || 0) * (Number(item.quantity) || 0),
     0
   );
-  const noFrameCategoryIds = new Set(['not-coffee']);
-
   if (loading) {
     return (
       <div className="min-h-screen bg-[var(--crisp-white)] flex items-center justify-center">
@@ -802,167 +803,68 @@ export function MenuPage({
 
         {/* Category Icons */}
         <div className="relative">
-          <div
-            className={
-              `flex items-center gap-2 px-3 py-2 border-b border-[var(--matte-black)] border-opacity-20 ` +
-              (isRTL ? 'flex-row-reverse' : '')
-            }
-          >
-            <div
-              className={
-                `flex gap-2 overflow-x-auto overflow-y-visible scrollbar-hide flex-1 ` +
-                (isRTL ? 'pl-2' : 'pr-2')
-              }
-            >
-              {categories.map((category) => {
-                const isNoFrame =
-                  noFrameCategoryIds.has(category.id) ||
-                  category.nameEn?.toLowerCase().includes('not coffee');
-                return (
-                  <div
-                    key={category.id}
-                    role="button"
-                    tabIndex={0}
+          <div className="mx-auto flex max-w-3xl gap-2 overflow-x-auto px-3 py-2 scrollbar-hide">
+            {categories.map((category) => {
+              const Icon = categoryIcons.get(category.id) ?? LayoutGrid;
+              const isActive = activeCategory === category.id;
+              return (
+                <div key={category.id} className="flex shrink-0 flex-col items-center gap-1">
+                  <button
+                    type="button"
+                    aria-current={isActive ? 'location' : undefined}
                     onClick={() => {
                       setActiveCategory(category.id);
-                      const element = document.getElementById(`category-${category.id}`);
-                      if (element) {
-                        const top =
-                          element.getBoundingClientRect().top +
-                          window.scrollY -
-                          (headerHeight || 0) -
-                          12;
+                      const section = document.getElementById(`category-${category.id}`);
+                      if (section) {
+                        const headerBottom = headerRef.current?.getBoundingClientRect().bottom ?? 0;
+                        const top = section.getBoundingClientRect().top + window.scrollY - headerBottom - 12;
                         window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
                       }
                     }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        setActiveCategory(category.id);
-                        const element = document.getElementById(`category-${category.id}`);
-                        if (element) {
-                          const top =
-                            element.getBoundingClientRect().top +
-                            window.scrollY -
-                            (headerHeight || 0) -
-                            12;
-                          window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
-                        }
-                        e.preventDefault();
-                      }
-                    }}
-                    className={`flex flex-col items-center gap-1 flex-shrink-0 transition-all ${
-                      activeCategory === category.id ? 'opacity-100' : 'opacity-60'
+                    className={`flex min-w-[58px] max-w-[96px] flex-col items-center gap-1 rounded-lg px-1.5 py-1 text-center text-[11px] leading-tight transition-colors hover:bg-[var(--cool-gray)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--espresso-brown)] ${
+                      isActive ? 'font-semibold text-[var(--espresso-brown)]' : 'text-[var(--matte-black)]/75'
                     }`}
                   >
-                    <div
-                      className={`w-9 h-9 rounded-full flex items-center justify-center transition-all relative overflow-hidden ${
-                        activeCategory === category.id ? 'scale-[1.02]' : ''
-                      } ${isNoFrame ? 'border-0' : 'border-2'} ${
-                        isNoFrame
-                          ? 'border-transparent'
-                          : activeCategory === category.id
-                            ? 'border-[var(--espresso-brown)]'
-                            : 'border-[var(--matte-black)] border-opacity-30'
-                      }`}
-                    >
-                      {activeCategory === category.id && !isNoFrame && (
-                        <span className="absolute -inset-1 rounded-full border border-[var(--espresso-brown)]/30 shadow-[0_0_0_6px_rgba(88,62,45,0.22)]" />
-                      )}
-                      {(() => {
-                        const iconById: Record<string, string> = {
-                          coffee: coffeeIcon,
-                          espresso: coffeeIcon,
-                          'test-cat-3gl702': coffeeIcon,
-                          v60: v60Icon,
-                          'not-coffee': notCoffeeIcon,
-                          cold: notCoffeeIcon,
-                          pastries: sweetsIcon,
-                          sweets: sweetsIcon,
-                        };
-                        const icon = iconById[category.id] || category.iconUrl || '';
-                        if (isNoFrame) {
-                          return (
-                            <div className="relative w-5 h-5 flex items-center justify-center">
-                              <Coffee
-                                size={16}
-                                strokeWidth={1.8}
-                                className="text-[var(--matte-black)] scale-[1.9]"
-                              />
-                              <Slash
-                                size={18}
-                                strokeWidth={1.8}
-                                className="absolute text-[var(--matte-black)] scale-[1.9]"
-                              />
-                            </div>
-                          );
-                        }
-
-                        if (!icon) {
-                          return (
-                            <ShoppingBag
-                              size={16}
-                              className="text-[var(--matte-black)] scale-[1.9]"
-                            />
-                          );
-                        }
-
-                        const resolved =
-                          icon.startsWith('figma:asset') || icon.includes('example.com')
-                            ? categoryFallback
-                            : icon;
-
-                        return (
-                          <img
-                            src={resolved}
-                            alt={language === 'en' ? category.nameEn : category.nameAr}
-                            className="w-5 h-5 object-contain scale-[1.9]"
-                          />
-                        );
-                      })()}
-                    </div>
-                    <span className="text-[8px] text-[var(--matte-black)] text-center leading-tight max-w-[60px]">
-                      {language === 'en' ? category.nameEn : category.nameAr}
+                    <span className={`grid h-10 w-10 place-items-center rounded-full border ${
+                      isActive
+                        ? 'border-[var(--espresso-brown)] bg-[var(--espresso-brown)] text-white'
+                        : 'border-[var(--matte-black)]/20 bg-[var(--crisp-white)]'
+                    }`}>
+                      <Icon size={21} strokeWidth={1.65} aria-hidden="true" />
                     </span>
-                    {canEdit && (
-                      <div className="flex gap-1">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditingCategory(category.id);
-                          }}
-                          className="p-1 bg-[var(--crisp-white)] border border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)] transition-colors"
-                        >
-                          <Edit2 size={10} />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteCategory(category.id);
-                          }}
-                          className="p-1 bg-[var(--crisp-white)] border border-[var(--matte-black)] hover:bg-red-600 hover:text-[var(--crisp-white)] transition-colors"
-                        >
-                          <Trash2 size={10} />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                    <span>{language === 'en' ? category.nameEn : category.nameAr}</span>
+                  </button>
+                  {canEdit && (
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => setEditingCategory(category.id)}
+                        className="p-1 bg-[var(--crisp-white)] border border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)] transition-colors"
+                      >
+                        <Edit2 size={10} />
+                      </button>
+                      <button
+                        onClick={() => deleteCategory(category.id)}
+                        className="p-1 bg-[var(--crisp-white)] border border-[var(--matte-black)] hover:bg-red-600 hover:text-[var(--crisp-white)] transition-colors"
+                      >
+                        <Trash2 size={10} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
 
-              {canEdit && (
-                <button
-                  onClick={() => setShowNewCategory(true)}
-                  className="flex flex-col items-center gap-2 flex-shrink-0"
-                >
-                  <div className="w-9 h-9 rounded-full border-2 border-dashed border-[var(--matte-black)] flex items-center justify-center hover:border-[var(--espresso-brown)] transition-colors">
-                    <Plus size={14} />
-                  </div>
-                  <span className="text-xs">Add</span>
-                </button>
-              )}
-            </div>
-
-            <div className="w-4" />
+            {canEdit && (
+              <button
+                onClick={() => setShowNewCategory(true)}
+                className="flex flex-col items-center gap-2 flex-shrink-0"
+              >
+                <div className="w-9 h-9 rounded-full border-2 border-dashed border-[var(--matte-black)] flex items-center justify-center hover:border-[var(--espresso-brown)] transition-colors">
+                  <Plus size={14} />
+                </div>
+                <span className="text-xs">Add</span>
+              </button>
+            )}
           </div>
 
           {/* Edit Category Modal */}
@@ -1078,7 +980,7 @@ export function MenuPage({
       <div style={{ height: headerHeight }} />
 
       {/* Menu Items by Category */}
-      <div className="p-3">
+      <div className="mx-auto max-w-3xl p-3">
         {menuLoadError && (
           <div className="p-4 border-2 border-red-600 bg-red-50 text-red-600 mb-4">
             <div className="mb-2">{text.menuUnavailable}</div>
@@ -1274,8 +1176,22 @@ export function MenuPage({
                           </div>
                         </div>
                       ) : (
-                        <div className="flex items-stretch">
-                          <div className="flex-1 p-3 flex flex-col justify-between min-h-[110px]">
+                        <div className="flex items-stretch" dir="ltr">
+                          {item.imageUrl && (
+                            <div className="relative w-[26%] max-w-28 shrink-0 bg-[var(--matte-black)] bg-opacity-10">
+                              <ImageWithFallback
+                                src={resolveImageUrl(item.imageUrl)}
+                                alt={language === 'en' ? item.nameEn : item.nameAr}
+                                className="absolute inset-0 h-full w-full object-cover"
+                                loading="lazy"
+                                decoding="async"
+                              />
+                            </div>
+                          )}
+                          <div
+                            dir={isRTL ? 'rtl' : 'ltr'}
+                            className="flex min-h-[110px] min-w-0 flex-1 flex-col justify-between p-3"
+                          >
                             <div>
                               <h3 className="text-base mb-1">
                                 {language === 'en' ? item.nameEn : item.nameAr}
@@ -1284,7 +1200,7 @@ export function MenuPage({
                                   <span className="ml-1.5 text-[10px] text-red-600">(Hidden)</span>
                                 )}
                               </h3>
-                              <p className="text-xs opacity-70 mb-2 line-clamp-2">
+                              <p className="mb-2 break-words text-xs leading-relaxed text-[var(--matte-black)]/75">
                                 {language === 'en' ? item.descriptionEn : item.descriptionAr}
                               </p>
                               {canOrder && item.available && itemHasTemperatureChoice && (
@@ -1305,7 +1221,7 @@ export function MenuPage({
                                             [item.id]: temperature,
                                           }))
                                         }
-                                        className={`min-w-[58px] px-3 py-1.5 text-[11px] transition-colors ${
+                                        className={`min-h-8 min-w-[48px] px-2 text-[11px] transition-colors ${
                                           selected
                                             ? 'bg-[var(--matte-black)] text-[var(--crisp-white)]'
                                             : 'text-[var(--matte-black)] hover:bg-[var(--cool-gray)]'
@@ -1319,9 +1235,12 @@ export function MenuPage({
                                 </div>
                               )}
                             </div>
-                            <div className="flex items-center justify-between">
-                              <div className="text-sm">
-                                {Number(item.price).toFixed(2)} {text.sar}
+                            <div
+                              className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1"
+                              dir={canEdit && isRTL ? 'rtl' : 'ltr'}
+                            >
+                              <div className="text-sm tabular-nums" dir={isRTL ? 'rtl' : 'ltr'}>
+                                <bdi>{Number(item.price).toFixed(2)}</bdi> {text.sar}
                               </div>
                               {canEdit ? (
                                 <div className="flex gap-1">
@@ -1347,10 +1266,10 @@ export function MenuPage({
                                 </div>
                               ) : canOrder && item.available ? (
                                 itemQty > 0 ? (
-                                  <div className="flex items-center border border-[var(--matte-black)] bg-[var(--crisp-white)]">
+                                  <div className="ml-auto flex shrink-0 items-center border border-[var(--matte-black)] bg-[var(--crisp-white)]">
                                     <button
                                       onClick={() => changeItemQuantity(item, -1)}
-                                      className="w-8 h-8 text-sm border-r border-[var(--matte-black)] hover:bg-[var(--cool-gray)] transition-colors"
+                                      className="h-9 w-8 text-sm border-r border-[var(--matte-black)] hover:bg-[var(--cool-gray)] transition-colors"
                                       aria-label={
                                         language === 'en' ? 'Decrease quantity' : 'تقليل الكمية'
                                       }
@@ -1362,7 +1281,7 @@ export function MenuPage({
                                     </div>
                                     <button
                                       onClick={() => addToCart(item)}
-                                      className="w-8 h-8 text-sm border-l border-[var(--matte-black)] hover:bg-[var(--cool-gray)] transition-colors"
+                                      className="h-9 w-8 text-sm border-l border-[var(--matte-black)] hover:bg-[var(--cool-gray)] transition-colors"
                                       aria-label={
                                         language === 'en' ? 'Increase quantity' : 'زيادة الكمية'
                                       }
@@ -1373,7 +1292,7 @@ export function MenuPage({
                                 ) : (
                                   <button
                                     onClick={() => addToCart(item)}
-                                    className="px-5 py-1.5 border border-[var(--matte-black)] hover:bg-[var(--espresso-brown)] hover:text-[var(--crisp-white)] hover:border-[var(--espresso-brown)] transition-colors text-xs"
+                                    className="ml-auto min-h-9 min-w-[72px] rounded border border-[var(--espresso-brown)] bg-[var(--espresso-brown)] px-3 text-xs font-medium text-[var(--crisp-white)] transition-colors hover:bg-[var(--matte-black)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--espresso-brown)]"
                                   >
                                     {lastAddedId === itemAddedKey
                                       ? language === 'en'
@@ -1387,17 +1306,6 @@ export function MenuPage({
                               ) : null}
                             </div>
                           </div>
-                          {item.imageUrl && (
-                            <div className="w-28 flex-shrink-0 bg-[var(--matte-black)] bg-opacity-10">
-                              <ImageWithFallback
-                                src={resolveImageUrl(item.imageUrl)}
-                                alt={language === 'en' ? item.nameEn : item.nameAr}
-                                className="w-full h-full object-cover"
-                                loading="lazy"
-                                decoding="async"
-                              />
-                            </div>
-                          )}
                         </div>
                       )}
                     </div>
@@ -1525,34 +1433,29 @@ export function MenuPage({
         })}
       </div>
 
-      {canOrder && (
+      {canOrder && cartItemCount > 0 && (
         <>
-          <div style={{ height: 88 }} />
+          <div aria-hidden="true" className="h-[calc(88px+env(safe-area-inset-bottom,0px))]" />
           <div
             className="fixed left-0 right-0 z-40 px-4"
             style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)' }}
           >
             <button
               onClick={() => onOpenCart()}
-              disabled={cartItemCount === 0}
               dir="ltr"
-              className={`mx-auto w-full max-w-xl min-h-[52px] px-4 py-2 flex items-center justify-between gap-4 text-sm border-2 shadow-[0_10px_24px_rgba(0,0,0,0.2)] transition-colors ${
-                cartItemCount === 0
-                  ? 'bg-[var(--crisp-white)] text-[var(--matte-black)] border-[var(--matte-black)]/25 opacity-80 cursor-not-allowed'
-                  : 'bg-[var(--espresso-brown)] text-[var(--crisp-white)] border-[var(--espresso-brown)] hover:bg-[var(--matte-black)] hover:border-[var(--matte-black)]'
-              }`}
+              className="mx-auto flex min-h-[52px] w-full max-w-xl items-center justify-between gap-2 border-2 border-[var(--espresso-brown)] bg-[var(--espresso-brown)] px-3 py-2 text-sm text-[var(--crisp-white)] shadow-[0_10px_24px_rgba(0,0,0,0.2)] transition-colors hover:border-[var(--matte-black)] hover:bg-[var(--matte-black)]"
             >
               <span className="text-xs min-w-[86px] text-start" dir={isRTL ? 'rtl' : 'ltr'}>
                 {cartTotal.toFixed(2)} {text.sar}
               </span>
               <span className="flex-1 text-center" dir={isRTL ? 'rtl' : 'ltr'}>
-                {cartItemCount === 0 ? text.emptyCart : text.checkout}
+                {text.checkout}
               </span>
               <span
                 className="text-xs min-w-[86px] text-end opacity-80"
                 dir={isRTL ? 'rtl' : 'ltr'}
               >
-                {cartItemCount > 0 ? `${cartItemCount} ${text.items}` : ''}
+                {cartItemCount} {text.items}
               </span>
             </button>
           </div>
